@@ -130,6 +130,21 @@ function roleFor(rel) {
 // ---------------------------------------------------------------- Estado
 let S = null;
 
+const INJURIES = [
+  { name: 'Esguince de tobillo', sev: 1, games: [0.03, 0.1], attrs: {} },
+  { name: 'Rotura de fibras', sev: 1, games: [0.08, 0.18], attrs: { velocidad: -1 } },
+  { name: 'Fractura en la mano', sev: 2, games: [0.15, 0.3], attrs: { tiro: -2 } },
+  { name: 'Hernia discal', sev: 2, games: [0.15, 0.35], attrs: { fisico: -2 } },
+  { name: 'Rotura de menisco', sev: 3, games: [0.3, 0.55], attrs: { velocidad: -3, fisico: -2 } },
+  { name: 'Rotura del ligamento cruzado', sev: 4, games: [0.75, 1], attrs: { velocidad: -6, fisico: -4, defensa: -2 } },
+  { name: 'Rotura del tendón de Aquiles', sev: 5, games: [0.85, 1], attrs: { velocidad: -9, fisico: -6, rebote: -3, defensa: -3 } },
+];
+function rollInjury() {
+  const r = Math.random() + S.fatigue / 140 + (S.age > 30 ? 0.08 : 0);
+  const idx = r < 0.3 ? 0 : r < 0.52 ? 1 : r < 0.66 ? 2 : r < 0.78 ? 3 : r < 0.9 ? 4 : r < 1.02 ? 5 : 6;
+  return INJURIES[idx];
+}
+
 function computeOvr() {
   const w = WEIGHTS[S.pos];
   return clamp(Math.round(ATTRS.reduce((a, { k }) => a + w[k] * S.attrs[k], 0)), 40, 99);
@@ -158,7 +173,10 @@ function newCareer({ name, pos, nat, start, block, height }) {
     attrs: {},
     focus: {},                // entrenamiento específico para la próxima temporada
     celebrations: [],
-    pot: randi(76, 97),       // potencial oculto
+    pot: 0,                   // potencial oculto
+    fatigue: 10,              // cansancio acumulado 0-100 (más cansancio = más lesiones y más graves)
+    injuries: [],
+    forcedRetire: null,
     fame: 10,
     injuryGuard: 0,           // temporadas con menor riesgo de lesión
     growthBonus: 0,           // bonificación de progresión para la próxima temporada
@@ -177,7 +195,9 @@ function newCareer({ name, pos, nat, start, block, height }) {
     over: false,
   };
   S.teamsPath.push(S.team.name);
-  initAttrs(randi(58, 65), height);
+  const start0 = randi(54, 64);
+  S.pot = Math.max(start0 + 3, Math.round(63 + 34 * Math.pow(Math.random(), 1.1)));
+  initAttrs(start0, height);
   S.peak = S.ovr; S.peakAttrs = { ...S.attrs }; S.prevAttrs = { ...S.attrs };
 }
 
@@ -200,18 +220,24 @@ function simulateSeason() {
   const role = roleFor(rel);
   const minutes = clamp(22 + rel * 2.0 + rand(-2, 2), t.league === 'NBA' ? 6 : 10, 37);
 
-  // Lesiones
-  let gp = L.games, injury = null;
-  const injRisk = (S.age > 30 ? 0.16 : 0.1) * (S.injuryGuard > 0 ? 0.5 : 1);
+  // Lesiones: el riesgo y la gravedad crecen con el cansancio y la edad
+  let gp = L.games - randi(0, Math.round(L.games * 0.05)), injury = null;
+  const injRisk = ((S.age > 30 ? 0.13 : 0.08) + S.fatigue / 220 + (S.age > 33 ? 0.06 : 0)) * (S.injuryGuard > 0 ? 0.6 : 1);
   if (chance(injRisk)) {
-    const missed = Math.round(L.games * rand(0.1, 0.7));
-    gp = L.games - missed;
-    injury = missed > L.games * 0.45 ? 'Lesión grave' : 'Lesión';
-    if (missed > L.games * 0.45) changeAttrs({ velocidad: -randi(2, 5), fisico: -randi(1, 3) });
-  } else {
-    gp = L.games - randi(0, Math.round(L.games * 0.08));
+    injury = rollInjury();
+    const missed = Math.round(L.games * rand(...injury.games));
+    gp = Math.max(0, L.games - missed);
+    changeAttrs(injury.attrs);
+    S.injuries.push({ name: injury.name, sev: injury.sev, season: seasonLabel(S.year) });
+    if (injury.sev >= 3) S.celebrations.push({ key: 'Lesión', bad: true, injury, team: t, season: seasonLabel(S.year), missed: L.games - gp, games: L.games });
+    if ((injury.sev === 5 && S.age >= 30 && chance(0.45)) || (injury.sev >= 4 && S.age >= 33 && chance(0.35))) {
+      S.forcedRetire = `La ${injury.name.toLowerCase()} pone fin a tu carrera a los ${S.age} años.`;
+      S.celebrations[S.celebrations.length - 1].ending = true;
+    }
+    S.fatigue = Math.max(0, S.fatigue - 25);   // la baja obliga a descansar
   }
   if (S.injuryGuard > 0) S.injuryGuard--;
+  if (gp === 0) { /* temporada en blanco */ }
 
   // Estadísticas
   const a = S.attrs, f = minutes / 36;
@@ -224,7 +250,8 @@ function simulateSeason() {
   const apg = qa * 0.15 * prof.ast * f * rand(0.85, 1.15);
 
   // Resultado del equipo
-  const contribution = rel * f * 0.6;
+  const playedShare = gp / L.games, healthy = playedShare >= 0.45;
+  const contribution = rel * f * 0.6 * playedShare;
   const league = TEAMS.filter(x => x.league === t.league)
     .map(x => ({ team: x, score: x.s + gauss() * 5 + (x === t ? contribution : 0) }))
     .sort((a, b) => b.score - a.score);
@@ -252,39 +279,40 @@ function simulateSeason() {
       const p = clamp((myScore - 76) / 90, 0.02, 0.22);
       if (chance(p)) {
         addTrophy('Euroliga'); awards.push('🏆 Euroliga');
-        if (rel >= 6 && chance(0.6)) { addTrophy('MVP Final Four'); awards.push('⭐ MVP Final Four'); }
+        if (healthy && rel >= 6 && chance(0.6)) { addTrophy('MVP Final Four'); awards.push('⭐ MVP Final Four'); }
       } else if (chance(p * 1.6)) awards.push('Final Four');
-      if (S.ovr >= 85 && rel >= 7 && chance(0.25)) { addTrophy('MVP Euroliga'); awards.push('⭐ MVP Euroliga'); }
+      if (healthy && S.ovr >= 85 && rel >= 7 && chance(0.25)) { addTrophy('MVP Euroliga'); awards.push('⭐ MVP Euroliga'); }
     }
-    if (rel >= 7 && ppg >= 13 && chance(clamp(0.15 + (rel - 7) * 0.06, 0, 0.6))) { addTrophy('MVP Liga Endesa'); awards.push('⭐ MVP ACB'); }
-    if (S.age <= 22 && rel >= 0 && chance(0.35)) { addTrophy('Mejor Joven ACB'); awards.push('Mejor Joven ACB'); }
+    if (healthy && rel >= 7 && ppg >= 13 && chance(clamp(0.15 + (rel - 7) * 0.06, 0, 0.6))) { addTrophy('MVP Liga Endesa'); awards.push('⭐ MVP ACB'); }
+    if (healthy && S.age <= 22 && rel >= 0 && chance(0.35)) { addTrophy('Mejor Joven ACB'); awards.push('Mejor Joven ACB'); }
   }
 
   if (t.league === 'NBA') {
     S.nbaSeasons++;
-    if (S.nbaSeasons === 1 && ppg >= 12 && chance(clamp((ppg - 10) / 12, 0, 0.9))) { addTrophy('Rookie del Año'); awards.push('⭐ Rookie del Año'); }
-    if (ppg >= 21 || (S.ovr >= 87 && chance(0.7))) { addTrophy('All-Star'); awards.push('All-Star'); }
+    if (healthy && S.nbaSeasons === 1 && ppg >= 12 && chance(clamp((ppg - 10) / 12, 0, 0.9))) { addTrophy('Rookie del Año'); awards.push('⭐ Rookie del Año'); }
+    if (healthy && (ppg >= 21 || (S.ovr >= 87 && chance(0.7)))) { addTrophy('All-Star'); awards.push('All-Star'); }
     if (S.ovr >= 91 && gp > 60) { addTrophy('All-NBA'); awards.push('All-NBA'); }
     if (S.ovr >= 93 && rank <= 5 && gp > 65 && chance((S.ovr - 92) * 0.16)) { addTrophy('MVP NBA'); awards.push('⭐ MVP NBA'); }
-    if (won && rel >= 6 && chance(0.7)) { addTrophy('MVP de las Finales'); awards.push('⭐ MVP Finales'); }
+    if (healthy && won && rel >= 6 && chance(0.7)) { addTrophy('MVP de las Finales'); awards.push('⭐ MVP Finales'); }
   }
 
   if (t.league === 'NCAA') {
     S.ncaaYears++;
-    if (ppg >= 18) { addTrophy('All-American'); awards.push('All-American'); }
-    if (won && rel >= 4) { addTrophy('Most Outstanding Player'); awards.push('⭐ MOP Final Four'); }
+    if (healthy && ppg >= 18) { addTrophy('All-American'); awards.push('All-American'); }
+    if (healthy && won && rel >= 4) { addTrophy('Most Outstanding Player'); awards.push('⭐ MOP Final Four'); }
   }
 
   // Selección española (verano tras la temporada)
   const summer = S.year + 1;
   const tourney = { 3: 'Mundial', 0: 'Juegos Olímpicos', 1: 'EuroBasket' }[summer % 4];
-  if (S.nat === 'España' && tourney && S.ovr >= 79 && !(injury === 'Lesión grave')) {
-    const pGold = clamp(0.12 + (S.ovr - 80) * 0.015, 0.08, 0.42);
+  if (S.nat === 'España' && tourney && S.ovr >= 81 && !(injury && injury.sev >= 3)) {
+    S.fatigue += 12;
+    const pGold = clamp(0.08 + (S.ovr - 82) * 0.015, 0.05, 0.35);
     const r = Math.random();
     let medal = null;
     if (r < pGold) medal = 'Oro';
-    else if (r < pGold + 0.16) medal = 'Plata';
-    else if (r < pGold + 0.32) medal = 'Bronce';
+    else if (r < pGold + 0.12) medal = 'Plata';
+    else if (r < pGold + 0.24) medal = 'Bronce';
     const icon = { Oro: '🥇', Plata: '🥈', Bronce: '🥉' };
     if (medal) {
       const label = tourney === 'Juegos Olímpicos' ? `${medal} olímpico` : `${medal} ${tourney}`;
@@ -295,14 +323,16 @@ function simulateSeason() {
 
   // Progresión
   const prevOvr = S.ovr;
+  const gap = S.pot - S.ovr;
   let delta;
-  if (S.age <= 21) delta = rand(2, 6);
-  else if (S.age <= 25) delta = rand(0.5, 4);
-  else if (S.age <= 29) delta = rand(-1, 2);
-  else if (S.age <= 32) delta = rand(-3, 0.5);
-  else delta = rand(-6, -1.5);
-  if (S.ovr > S.pot - 2 && delta > 0) delta *= 0.25;      // techo de potencial
-  if (minutes > 28 && S.age <= 25) delta += 0.8;          // los minutos hacen crecer
+  if (S.age <= 21) delta = gap * rand(0.08, 0.24) + rand(-1, 1.5);
+  else if (S.age <= 25) delta = gap * rand(0.04, 0.16) + rand(-1.5, 1);
+  else if (S.age <= 29) delta = rand(-1.5, 1.5);
+  else if (S.age <= 32) delta = rand(-3.5, 0);
+  else delta = rand(-6, -2);
+  if (gap <= 0 && delta > 0) delta = rand(-1, 0.5);        // techo de potencial
+  if (S.age <= 25) delta += role === 'Banquillo' ? -1.2 : minutes > 28 ? 0.8 : 0;   // sin minutos te estancas
+  if (S.fatigue > 70) delta -= 1;                         // jugar reventado pasa factura
   delta += S.growthBonus; S.growthBonus = 0;
   // Reparto por atributos: el cuerpo crece de joven y se apaga con la edad; la cabeza mejora
   const aging = S.age <= 22 ? { velocidad: 0.5, fisico: 0.8 }
@@ -312,6 +342,9 @@ function simulateSeason() {
   S.focus = {};
   changeAttrs(changes);
   if (S.ovr >= S.peak) { S.peak = S.ovr; S.peakAttrs = { ...S.attrs }; }
+
+  // Cansancio: sube con los minutos jugados, se recupera algo de forma natural
+  S.fatigue = clamp(S.fatigue + (gp / L.games) * minutes * 0.9 + (t.league === 'NBA' ? 8 : 0) - (S.age < 28 ? 22 : 15), 0, 100);
 
   // Fama
   S.fame = clamp(S.fame + (role === 'Estrella' ? 6 : role === 'Titular' ? 3 : 0) + (won ? 5 : 0) + (t.league === 'NBA' ? 2 : 0), 0, 100);
@@ -327,7 +360,7 @@ function simulateSeason() {
 
   const season = {
     label: seasonLabel(S.year), team: t.name, color: t.color, league: t.league,
-    age: S.age, ovr: prevOvr, newOvr: S.ovr, gp, ppg, rpg, apg, role, result, won, awards, injury, earned,
+    age: S.age, ovr: prevOvr, newOvr: S.ovr, gp, ppg, rpg, apg, role, result, won, awards, injury: injury ? injury.name : null, injurySev: injury ? injury.sev : 0, earned,
   };
   S.seasons.push(season);
   S.year++; S.age++;
@@ -337,12 +370,35 @@ function simulateSeason() {
 // ---------------------------------------------------------------- Eventos (decisiones entre bloques)
 const EVENTS = [
   () => ({
-    title: '☀️ Verano de trabajo',
-    text: 'Se acaba la temporada. ¿En qué inviertes el verano?',
+    title: '🍾 Noche de fiesta',
+    text: 'Tus compañeros te invitan a celebrar a lo grande… a dos días del inicio de la pretemporada.',
     options: [
-      { label: '🎯 Mejorar el tiro', sub: 'Más progresión, más cansancio', run: () => { S.focus.tiro = (S.focus.tiro || 0) + (S.age < 30 ? 4 : 2); return 'Mil tiros diarios. Tu mecánica está más fina que nunca. (🎯 Tiro ↑)'; } },
-      { label: '💪 Trabajo físico', sub: 'Menos riesgo de lesión', run: () => { S.injuryGuard = 2; S.focus.fisico = (S.focus.fisico || 0) + 3; S.focus.velocidad = (S.focus.velocidad || 0) + 1; return 'Llegas a pretemporada como un toro. (💪 Físico ↑ ⚡ Velocidad ↑)'; } },
-      { label: '🏝️ Vacaciones', sub: 'Desconectar también cuenta', run: () => { S.fame += 2; return 'Ibiza, playa y fotos virales. Vuelves fresco.'; } },
+      { label: 'Ir a la fiesta', sub: 'Una noche no hace daño… ¿o sí?', run: () => { S.fame += 3; if (chance(0.45)) { S.fatigue += 15; changeAttrs({ fisico: -2, velocidad: -1 }); return 'Llegas a la pretemporada fuera de forma y el entrenador se da cuenta. (💪 −2 ⚡ −1)'; } return 'Gran noche y nadie se entera. Te has librado.'; } },
+      { label: 'Quedarte en casa', sub: 'Profesional', run: () => 'A dormir pronto. El cuerpo te lo agradece.' },
+    ],
+  }),
+  () => ({
+    title: '😤 Bronca con el entrenador',
+    text: 'El entrenador te critica delante del vestuario por tu defensa.',
+    options: [
+      { label: 'Agachar la cabeza y trabajar', sub: 'Humildad', run: () => { S.focus.defensa = (S.focus.defensa || 0) + 2; return 'Te pones las pilas atrás. (🛡️ Defensa ↑)'; } },
+      { label: 'Encararte con él', sub: 'Que sepa quién manda', run: () => { if (chance(0.6)) { S.growthBonus -= 2; S.fame -= 4; return 'Te manda al fondo del banquillo durante semanas. Mal asunto.'; } S.fame += 4; return 'El vestuario se pone de tu lado. Ganas galones.'; } },
+    ],
+  }),
+  () => ({
+    title: '📉 Bajón de confianza',
+    text: 'Llevas semanas sin meter un tiro y la prensa empieza a hablar de "jugador quemado".',
+    options: [
+      { label: 'Psicólogo deportivo', sub: 'Trabajar la cabeza', run: () => { if (chance(0.7)) return 'Recuperas la confianza poco a poco.'; S.growthBonus -= 1; return 'Te cuesta salir del pozo.'; } },
+      { label: 'Ignorarlo y tirar más', sub: 'Ya entrarán', run: () => { if (chance(0.5)) { S.focus.tiro = (S.focus.tiro || 0) + 2; return '¡Vuelves a enchufarlas! (🎯 Tiro ↑)'; } S.focus.tiro = (S.focus.tiro || 0) - 3; return 'Cada vez peor. Tu mecánica se resiente. (🎯 Tiro ↓)'; } },
+    ],
+  }),
+  () => ({
+    title: '🌱 ¿Estirón tardío?',
+    text: 'Los preparadores ven algo distinto en ti este verano.',
+    options: [
+      { label: 'Doble sesión diaria', sub: 'A por todas (+cansancio)', run: () => { S.fatigue += 15; if (S.age <= 23 && chance(0.6)) { S.pot += randi(3, 6); return '¡Explotas! Tu techo como jugador es más alto de lo que nadie pensaba.'; } S.growthBonus += 0.5; return 'Mucho sudor para una mejora pequeña.'; } },
+      { label: 'Ir con calma', sub: 'Sin forzar', run: () => { S.fatigue -= 10; return 'Ritmo tranquilo. Llegas descansado.'; } },
     ],
   }),
   () => ({
@@ -390,9 +446,9 @@ const EVENTS = [
 // ---------------------------------------------------------------- Ofertas
 // Sueldo anual en millones de euros
 function salaryM(team, ovr = S.ovr) {
-  if (team.league === 'NBA') return Math.max(1.1, (ovr - 70) * 2.3) * 0.92;
+  if (team.league === 'NBA') return Math.max(1.1, (ovr - 70) * 2.3 * (0.75 + (team.s - 55) / 80)) * 0.92;
   if (team.league === 'NCAA') return 0.05;
-  return Math.max(0.08, (ovr - 58) * 0.12);
+  return Math.max(0.06, (ovr - 58) * 0.12) * (0.75 + (team.s - 55) / 80);
 }
 function salaryText(team) {
   if (team.league === 'NCAA') return 'Beca + NIL';
@@ -418,19 +474,24 @@ function buildOffers() {
     offers.push(offerFor(team, { draft: pickN, note: `Draft ${S.year}: elección nº ${pickN} (${pickN <= 30 ? '1ª' : '2ª'} ronda)` }));
   }
 
-  // Equipos interesados
+  // Equipos interesados: te buscan los equipos de tu nivel. Cuanta más media, mejores equipos.
+  // Los equipos muy por debajo de tu nivel no se atreven a llamarte; los muy por encima no te quieren.
+  const injuredRecently = S.injuries.some(i => i.sev >= 4 && i.season === seasonLabel(S.year - 1));
+  const target = S.ovr - 3 - (injuredRecently ? 3 : 0);
   const pool = TEAMS.filter(t => t !== cur && t.league !== 'NCAA')
     .filter(t => t.league !== 'NBA' || S.drafted || S.ovr >= 78)
-    .map(t => ({ t, rel: S.ovr - teamLevel(t) }))
-    .filter(x => x.rel >= -5);
-  const sorted = [...pool].sort((a, b) => b.t.s - a.t.s);
-  const best = sorted.find(x => x.rel >= -5);
+    .map(t => ({ t, lvl: teamLevel(t), rel: S.ovr - teamLevel(t) }))
+    .filter(x => x.rel >= -5 && x.rel <= 12);
   const picked = new Set(offers.map(o => o.team));
+  const best = [...pool].filter(x => x.rel >= -4).sort((a, b) => b.lvl - a.lvl)[0];
   if (best && !picked.has(best.t)) { offers.push(offerFor(best.t, { note: 'Oferta más ambiciosa' })); picked.add(best.t); }
-  for (const x of shuffle(pool)) {
-    if (offers.length >= 4) break;
-    if (!picked.has(x.t)) { offers.push(offerFor(x.t)); picked.add(x.t); }
+  let rest = pool.filter(x => !picked.has(x.t));
+  while (offers.length < 4 && rest.length) {
+    const x = weightedPick(rest, y => Math.exp(-Math.abs(y.lvl - target) / 2.5) * (0.6 + y.t.s / 100));
+    offers.push(offerFor(x.t)); picked.add(x.t);
+    rest = rest.filter(y => y !== x);
   }
+  if (injuredRecently && offers.length) offers.forEach(o => { o.note = (o.note ? o.note + ' · ' : '') + 'Dudan de tu rodilla'; });
   // Plan B: si nadie te quiere, equipos modestos de la ACB
   if (offers.length === 0) {
     const weak = TEAMS.filter(t => t.league === 'ACB' && t !== cur).sort((a, b) => a.s - b.s).slice(0, 3);
@@ -474,6 +535,7 @@ function attrsHTML(attrs, prev) {
       <b>${val}${diff ? ` <small class="${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '+' : ''}${diff}</small>` : ''}</b>
     </div>`;
   return ATTRS.map(({ k, label, icon }) => bar(`${icon} ${label}`, attrs[k], attrs[k], prev ? attrs[k] - prev[k] : 0)).join('')
+    + (prev ? `<div class="attr"><span class="attr-label">🥵 Cansancio</span><span class="attr-bar"><i style="width:${Math.max(3, S.fatigue)}%;background:${S.fatigue >= 70 ? 'var(--red)' : S.fatigue >= 45 ? 'var(--orange2)' : 'var(--green)'}"></i></span><b>${Math.round(S.fatigue)}%</b></div>` : '')
     + `<div class="attr"><span class="attr-label">📏 Altura</span><span class="attr-bar"><i style="width:${clamp((S.height - 175) / 50 * 100, 5, 100)}%;background:#7db7ff"></i></span><b>${fmtHeight(S.height)}</b></div>`;
 }
 
@@ -487,7 +549,7 @@ function renderLog() {
       <td>${s.ovr} <small class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'}${Math.abs(d)}</small></td>
       <td>${s.gp}</td><td>${fmt1(s.ppg)}</td><td>${fmt1(s.rpg)}</td><td>${fmt1(s.apg)}</td>
       <td>${s.role}</td>
-      <td>${s.result}${s.injury ? ` · <span class="down">${s.injury}</span>` : ''}${s.awards.length ? `<div class="awards">${s.awards.map(esc).join(' · ')}</div>` : ''}</td>
+      <td>${s.result}${s.injury ? ` · <span class="${s.injurySev >= 3 ? 'down' : 'warn'}">🩼 ${esc(s.injury)}</span>` : ''}${s.awards.length ? `<div class="awards">${s.awards.map(esc).join(' · ')}</div>` : ''}</td>
     </tr>`;
   }).reverse().join('');
 }
@@ -499,7 +561,7 @@ function panel(html) { $('#panel').innerHTML = html; }
 function seasonNews(list) {
   return list.map(s => {
     const highlight = s.awards.length ? ` — ${s.awards.map(esc).join(', ')}` : '';
-    return `<div class="news"><span class="team-cell">${crestByName(s.team, 22)}<span><b>${s.label}</b> · ${esc(s.team)}: ${fmt1(s.ppg)} pts, ${fmt1(s.rpg)} reb, ${fmt1(s.apg)} ast · ${s.result}${highlight}</span></span></div>`;
+    return `<div class="news"><span class="team-cell">${crestByName(s.team, 22)}<span><b>${s.label}</b> · ${esc(s.team)}: ${fmt1(s.ppg)} pts, ${fmt1(s.rpg)} reb, ${fmt1(s.apg)} ast · ${s.result}${highlight}${s.injury ? ` · <span class="${s.injurySev >= 3 ? 'down' : 'warn'}">🩼 ${esc(s.injury)} (${s.gp} PJ)</span>` : ''}</span></span></div>`;
   }).join('');
 }
 
@@ -519,25 +581,56 @@ function playBlock() {
 }
 
 function mustRetire() {
+  if (S.forcedRetire) return S.forcedRetire;
   if (S.age >= 41) return 'El cuerpo dice basta a los 41 años.';
   if (S.age >= 36 && S.ovr < 68) return 'Ya no encuentras equipo a tu nivel. Toca colgar las botas.';
   if (S.age >= 30 && S.ovr < 56) return 'Las lesiones y la falta de minutos te obligan a retirarte.';
   return null;
 }
 
+function fatigueText() {
+  const f = Math.round(S.fatigue);
+  return f >= 70 ? `🥵 Cansancio ${f}%: estás reventado. Riesgo de lesión grave muy alto.`
+    : f >= 45 ? `😓 Cansancio ${f}%: el cuerpo empieza a avisar.`
+    : `🔋 Cansancio ${f}%: estás fresco.`;
+}
+
+function choiceButtons(options) {
+  return `<div class="options">${options.map((o, i) => `<button class="offer" data-ev="${i}"><span class="bar" style="background:var(--orange)"></span><span><b>${o.label}</b><small>${o.sub}</small></span><span></span></button>`).join('')}</div>`;
+}
+
 function showEvent(played) {
-  const ev = pick(EVENTS)();
+  const summer = [
+    { label: '🎯 Mejorar el tiro', sub: 'Tiro ↑ · Cansancio +20', run: () => { S.fatigue += 20; S.focus.tiro = (S.focus.tiro || 0) + (S.age < 30 ? 4 : 2); return 'Mil tiros diarios. Tu mecánica está más fina que nunca. (🎯 Tiro ↑)'; } },
+    { label: '💪 Trabajo físico', sub: 'Físico ↑ · Cansancio +12 · algo menos de riesgo', run: () => { S.fatigue += 12; S.injuryGuard = 1; S.focus.fisico = (S.focus.fisico || 0) + 3; S.focus.velocidad = (S.focus.velocidad || 0) + 1; return 'Llegas a pretemporada como un toro. (💪 Físico ↑ ⚡ Velocidad ↑)'; } },
+    { label: '🏀 Liga de verano', sub: 'Tu peor atributo ↑ · Cansancio +25', run: () => { S.fatigue += 25; const w = ATTRS.reduce((m, a) => (S.attrs[a.k] < S.attrs[m.k] ? a : m)); S.focus[w.k] = (S.focus[w.k] || 0) + 3; return `Partidos y más partidos en verano. (${w.icon} ${w.label} ↑)`; } },
+    { label: '🏝️ Vacaciones', sub: 'Sin mejoras · Cansancio −45', run: () => { S.fatigue -= 45; S.fame += 1; return 'Playa, familia y cero balones. Vuelves con las pilas cargadas. 🔋'; } },
+  ];
   panel(`
     <h3>Resumen de ${played.length > 1 ? 'las últimas temporadas' : 'la temporada'}</h3>
     ${seasonNews(played)}
+    <h3 style="margin-top:16px">☀️ ¿Qué haces este verano?</h3>
+    <p class="fatigue-msg ${S.fatigue >= 70 ? 'down' : S.fatigue >= 45 ? 'warn' : 'up'}">${fatigueText()}</p>
+    ${choiceButtons(summer)}`);
+  document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
+    const msg = summer[+b.dataset.ev].run();
+    S.fatigue = clamp(S.fatigue, 0, 100);
+    renderStatus();
+    if (chance(0.6)) showRandomEvent(msg); else showOffers(msg);
+  });
+}
+
+function showRandomEvent(prevMsg) {
+  const ev = pick(EVENTS)();
+  panel(`
+    <div class="news">${esc(prevMsg)}</div>
     <h3 style="margin-top:16px">${ev.title}</h3>
     <p>${ev.text}</p>
-    <div class="options">
-      ${ev.options.map((o, i) => `<button class="offer" data-ev="${i}"><span class="bar" style="background:var(--orange)"></span><span><b>${o.label}</b><small>${o.sub}</small></span><span></span></button>`).join('')}
-    </div>`);
+    ${choiceButtons(ev.options)}`);
   document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
     const msg = ev.options[+b.dataset.ev].run();
     S.fame = clamp(S.fame, 0, 100);
+    S.fatigue = clamp(S.fatigue, 0, 100);
     renderStatus();
     showOffers(msg);
   });
@@ -595,7 +688,10 @@ const TROPHY_POINTS = { 'Anillo NBA': 30, 'MVP NBA': 40, 'MVP de las Finales': 2
 function legacy() {
   let pts = Object.entries(S.trophies).reduce((a, [k, v]) => a + (TROPHY_POINTS[k] || 2) * v, 0);
   pts += S.totals.pts / 400 + S.fame / 4;
-  const label = pts >= 400 ? 'GOAT' : pts >= 250 ? 'Leyenda' : pts >= 150 ? 'Hall of Fame' : pts >= 80 ? 'Gran carrera' : pts >= 40 ? 'Jugador sólido' : 'Currante de la pista';
+  const serious = S.injuries.filter(i => i.sev >= 4).length;
+  let label = pts >= 400 ? 'GOAT' : pts >= 250 ? 'Leyenda' : pts >= 150 ? 'Hall of Fame' : pts >= 80 ? 'Gran carrera' : pts >= 40 ? 'Jugador sólido' : S.peak >= 66 ? 'Currante de la pista' : 'Promesa frustrada';
+  if (serious >= 2 && pts < 150) label = 'Carrera rota por las lesiones';
+  else if (S.forcedRetire && pts < 80) label = 'Retirado por lesión';
   return { pts: Math.round(pts), label };
 }
 
@@ -774,8 +870,23 @@ function artJersey(team, number) {
   </svg>`;
 }
 
+function artInjury() {
+  return `<svg viewBox="0 0 120 140" class="art">
+    <circle cx="60" cy="62" r="48" fill="#c62828" stroke="#ff8a80" stroke-width="4"/>
+    <rect x="49" y="30" width="22" height="64" rx="4" fill="#fff"/><rect x="28" y="51" width="64" height="22" rx="4" fill="#fff"/>
+    <g transform="rotate(-35 60 110)"><rect x="14" y="100" width="92" height="22" rx="11" fill="#f2d3a8" stroke="#c9a77a" stroke-width="2"/>
+    ${[30, 42, 54, 66, 78, 90].map(x => `<circle cx="${x}" cy="111" r="1.8" fill="#c9a77a"/>`).join('')}<rect x="50" y="100" width="20" height="22" fill="#e9c28f"/></g>
+  </svg>`;
+}
+
 function celebrationInfo(c) {
   const k = c.key, t = c.team;
+  if (k === 'Lesión') {
+    const inj = c.injury;
+    return { art: artInjury(), kicker: `Temporada ${c.season} · ${c.missed} de ${c.games} partidos de baja`,
+      title: c.ending ? '¡FIN DE CARRERA!' : inj.sev >= 4 ? '¡LESIÓN GRAVE!' : '¡LESIÓN!',
+      sub: `${inj.name}. ${Object.entries(inj.attrs).map(([a, v]) => `${ATTRS.find(x => x.k === a).icon} ${v}`).join(' ')}` };
+  }
   if (k === 'Draft') return { art: artJersey(t, c.pick), kicker: `Draft NBA ${c.summer}`, title: c.pick === 1 ? '¡NÚMERO 1 DEL DRAFT!' : '¡ELEGIDO EN EL DRAFT!', sub: `${t.name} te elige con el pick nº ${c.pick}` };
   if (k === 'Anillo NBA') return { art: artRing(t), kicker: `Temporada ${c.season}`, title: '¡CAMPEÓN DE LA NBA!', sub: `Ganas el anillo con ${t.name}` };
   const cups = { 'Euroliga': ['¡CAMPEÓN DE EUROPA!', '#ff6b00', 'star'], 'Liga Endesa': ['¡CAMPEÓN DE LIGA!', '#f08a00', ''], 'Copa del Rey': ['¡CAMPEÓN DE COPA!', '#c60b1e', 'crown'], 'Campeonato NCAA': ['¡CAMPEÓN NCAA!', '#1d428a', ''] };
@@ -794,10 +905,11 @@ function celebrate(queue, done) {
   const close = () => { ov.remove(); done(); };
   const render = () => {
     const c = queue[i], info = celebrationInfo(c);
+    ov.classList.toggle('bad', !!c.bad);
     const colors = c.team ? [c.team.color, c.team.color2, '#ffd34d', '#ffffff'] : ['#c60b1e', '#ffc400', '#ffffff', '#ffd34d'];
-    const confetti = Array.from({ length: 46 }, () => `<i style="left:${rand(0, 100)}%;background:${pick(colors)};animation-delay:${rand(0, .9).toFixed(2)}s;animation-duration:${rand(1.8, 3.2).toFixed(2)}s;transform:rotate(${randi(0, 360)}deg);width:${randi(6, 11)}px;height:${randi(10, 16)}px"></i>`).join('');
+    const confetti = c.bad ? '' : Array.from({ length: 46 }, () => `<i style="left:${rand(0, 100)}%;background:${pick(colors)};animation-delay:${rand(0, .9).toFixed(2)}s;animation-duration:${rand(1.8, 3.2).toFixed(2)}s;transform:rotate(${randi(0, 360)}deg);width:${randi(6, 11)}px;height:${randi(10, 16)}px"></i>`).join('');
     ov.innerHTML = `
-      <div class="confetti">${confetti}</div>
+      ${confetti ? `<div class="confetti">${confetti}</div>` : ''}
       <div class="cel-card">
         <div class="cel-rays"></div>
         <div class="cel-art">${info.art}</div>
@@ -806,7 +918,7 @@ function celebrate(queue, done) {
         <h2 class="cel-title">${esc(info.title)}</h2>
         <p class="cel-sub">${esc(info.sub)}</p>
         <div class="actions center">
-          <button class="btn primary" data-cel="next">${i < queue.length - 1 ? `Siguiente (${i + 1}/${queue.length}) ▶` : '¡Vamos! ▶'}</button>
+          <button class="btn primary" data-cel="next">${i < queue.length - 1 ? `Siguiente (${i + 1}/${queue.length}) ▶` : c.bad ? (c.ending ? 'Ver mi carrera' : 'A recuperarse 💪') : '¡Vamos! ▶'}</button>
           ${queue.length - i > 1 ? '<button class="btn" data-cel="skip">Saltar todas</button>' : ''}
         </div>
       </div>`;
@@ -849,7 +961,7 @@ function init() {
     const t = S.team;
     panel(`
       <div class="welcome">${crest(t, 72)}<h3>¡Bienvenido a ${esc(t.name)}!</h3></div>
-      <p>Con 18 años y una media de <b>${S.ovr}</b>, empiezas tu carrera en ${t.league === 'NCAA' ? 'la NCAA' : 'la cantera y el primer equipo'} de ${esc(t.name)}. Los ojeadores dicen que tienes ${S.pot >= 92 ? 'un talento generacional' : S.pot >= 86 ? 'madera de estrella' : S.pot >= 80 ? 'buen futuro' : 'mucho trabajo por delante'}.</p>
+      <p>Con 18 años y una media de <b>${S.ovr}</b>, empiezas tu carrera en ${t.league === 'NCAA' ? 'la NCAA' : 'la cantera y el primer equipo'} de ${esc(t.name)}. Los ojeadores dicen que tienes ${S.pot >= 92 ? 'un talento generacional' : S.pot >= 85 ? 'madera de estrella' : S.pot >= 78 ? 'buen futuro' : S.pot >= 70 ? 'nivel para ser un jugador de rotación' : 'mucho trabajo por delante… y no todos llegan'}.</p>
       <div class="actions"><button class="btn primary big" id="btn-go">Jugar ${S.block > 1 ? `las primeras ${S.block} temporadas` : 'la primera temporada'} ▶</button></div>`);
     $('#btn-go').onclick = playBlock;
     show('game');

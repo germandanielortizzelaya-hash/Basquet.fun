@@ -245,3 +245,16 @@ input[type=range] { padding: 0; accent-color: var(--orange); }
   .attrs { grid-template-columns: 1fr; gap: 7px; }
   .attr { grid-template-columns: 92px 1fr 64px; }
 }
+
+/* lesiones y cansancio */
+.warn { color: var(--orange2); }
+.fatigue-msg { font-weight: 700; }
+.fatigue-msg.up { color: var(--green); } .fatigue-msg.warn { color: var(--orange2); } .fatigue-msg.down { color: var(--red); }
+.celebration.bad { background: radial-gradient(circle at 50% 40%, rgba(220,40,40,.28), rgba(5,6,10,.94) 60%); }
+.celebration.bad .cel-card { border-color: rgba(255,93,93,.45); box-shadow: 0 0 60px rgba(220,40,40,.3); animation: pop .4s ease, shake .5s ease .4s; }
+.celebration.bad .cel-rays { background: repeating-conic-gradient(rgba(255,93,93,.08) 0 10deg, transparent 10deg 20deg); animation-duration: 40s; }
+.celebration.bad .cel-art { animation: none; }
+.celebration.bad .art { filter: drop-shadow(0 8px 20px rgba(255,60,60,.45)); }
+.celebration.bad .cel-title { background: linear-gradient(90deg, #ff5d5d, #ffb3b3, #ff5d5d); -webkit-background-clip: text; background-clip: text; animation: none; }
+.celebration.bad .cel-kicker { color: #ff8a80; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
