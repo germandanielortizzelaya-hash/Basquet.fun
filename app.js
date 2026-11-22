@@ -589,7 +589,17 @@ function init() {
   }));
   $('#btn-copy').onclick = async () => {
     try { await navigator.clipboard.writeText(shareText()); toast('¡Resumen copiado!'); }
-    catch { prompt('Copia tu resumen:', shareText()); }
+    catch {
+      let ta = $('#share-fallback');
+      if (!ta) {
+        ta = document.createElement('textarea');
+        ta.id = 'share-fallback'; ta.readOnly = true; ta.rows = 8;
+        ta.style.cssText = 'display:block;width:100%;max-width:560px;margin:14px auto 0;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;font-size:.85rem';
+        $('#btn-copy').parentElement.after(ta);
+      }
+      ta.value = shareText(); ta.focus(); ta.select();
+      toast('Selecciona y copia el texto');
+    }
   };
   $('#btn-clear-hof').onclick = () => { localStorage.removeItem(HOF_KEY); renderHof(); };
 }
