@@ -157,3 +157,51 @@ table.log { width: 100%; border-collapse: collapse; font-size: .85rem; white-spa
   .status .ovr { grid-column: 1 / -1; display: flex; gap: 14px; justify-content: flex-start; }
   .totals { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* escudos */
+.crest { flex: none; display: block; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+.team-cell { display: inline-flex; align-items: center; gap: 8px; }
+.team-cell small { display: block; color: var(--muted); font-size: .75rem; white-space: normal; }
+.avatar-wrap { position: relative; width: 58px; }
+.avatar-ini { position: absolute; right: -8px; bottom: -4px; font-size: .7rem; font-weight: 900; border-radius: 999px; padding: 2px 6px; border: 2px solid var(--card); }
+.offer { grid-template-columns: auto 1fr auto; padding: 12px 14px; }
+.offer .bar { width: 6px; border-radius: 4px; }
+.crest-cell { display: grid; place-items: center; width: 44px; }
+.welcome { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.welcome h3 { margin: 0; }
+.news .team-cell { align-items: flex-start; }
+.chip.money { border-color: rgba(61,220,132,.4); color: var(--green); }
+.teams-path { display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center; }
+.path-team { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.04); border-radius: 999px; padding: 3px 10px 3px 4px; color: var(--text); }
+.arrow { color: var(--muted); }
+.totals { grid-template-columns: repeat(3, 1fr); }
+.totals .wide { grid-column: 1 / -1; }
+.totals .wide b { color: var(--green); }
+
+/* récords */
+.rec-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rec-card { background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 6px; }
+.rec-card small { color: var(--muted); text-transform: uppercase; font-size: .68rem; letter-spacing: 1px; }
+.rec-card b { font-size: 1.25rem; color: var(--orange); }
+.rec-card .team-cell { font-size: .88rem; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; }
+.tab { background: var(--bg2); border: 1px solid var(--line); color: var(--muted); padding: 7px 12px; border-radius: 999px; font: inherit; font-size: .85rem; cursor: pointer; white-space: nowrap; }
+.tab.active { border-color: var(--orange); color: var(--text); background: rgba(255,122,26,.12); }
+.rec-table { width: 100%; border-collapse: collapse; }
+.rec-table td { padding: 9px 6px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: middle; }
+.rec-table .pos { width: 34px; text-align: center; font-weight: 800; color: var(--muted); }
+.rec-table .val { text-align: right; font-weight: 800; white-space: nowrap; color: var(--orange); }
+
+@media (max-width: 600px) {
+  .rec-cards { grid-template-columns: repeat(2, 1fr); }
+  .totals { grid-template-columns: repeat(3, 1fr); }
+  .rec-table small { font-size: .7rem; }
+}
+
+@media (max-width: 600px) {
+  .topbar { padding: 10px 12px; }
+  .brand { font-size: 1.05rem; white-space: nowrap; }
+  .topbar nav { display: flex; gap: 2px; }
+  .link { padding: 6px 8px; font-size: .85rem; white-space: nowrap; }
+  .status { gap: 12px 14px; }
+}

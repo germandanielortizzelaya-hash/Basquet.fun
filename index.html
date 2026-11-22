@@ -13,7 +13,7 @@
     <div class="brand">🏀 <span>Basquet</span>.fun</div>
     <nav>
       <button class="link" data-goto="start">Nueva carrera</button>
-      <button class="link" data-goto="hof">Salón de la Fama</button>
+      <button class="link" data-goto="records">🏅 Récords</button>
     </nav>
   </header>
 
@@ -93,13 +93,18 @@
       </div>
     </section>
 
-    <!-- SALÓN DE LA FAMA -->
-    <section id="screen-hof" class="screen">
+    <!-- RÉCORDS -->
+    <section id="screen-records" class="screen">
       <div class="card">
-        <h2>🏛️ Salón de la Fama</h2>
-        <p class="muted">Tus 10 mejores carreras (guardadas en este navegador).</p>
-        <ol id="hof-list" class="hof"></ol>
-        <div class="actions"><button class="btn" id="btn-clear-hof">Borrar salón</button></div>
+        <h2>🏅 Récords</h2>
+        <p class="muted">Quién ha llegado más alto, ganado más anillos y cobrado más. <span id="rec-count"></span></p>
+        <div id="rec-cards" class="rec-cards"></div>
+      </div>
+      <div class="card">
+        <h3>Ranking</h3>
+        <div id="rec-tabs" class="tabs"></div>
+        <table class="rec-table"><tbody id="rec-table"></tbody></table>
+        <div class="actions"><button class="btn danger" id="btn-clear-rec">Borrar récords</button></div>
       </div>
     </section>
   </main>
