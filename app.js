@@ -58,6 +58,25 @@ const POS = {
 
 const START_YEAR = 2026;
 
+// Atributos del jugador y su peso en la media según la posición
+const ATTRS = [
+  { k: 'tiro', label: 'Tiro', icon: '🎯' },
+  { k: 'pase', label: 'Pase', icon: '🤝' },
+  { k: 'defensa', label: 'Defensa', icon: '🛡️' },
+  { k: 'rebote', label: 'Rebote', icon: '🙌' },
+  { k: 'velocidad', label: 'Velocidad', icon: '⚡' },
+  { k: 'fisico', label: 'Físico', icon: '💪' },
+];
+const WEIGHTS = {
+  'Base': { tiro: .25, pase: .30, defensa: .15, rebote: .05, velocidad: .15, fisico: .10 },
+  'Escolta': { tiro: .35, pase: .15, defensa: .15, rebote: .05, velocidad: .20, fisico: .10 },
+  'Alero': { tiro: .25, pase: .12, defensa: .20, rebote: .13, velocidad: .15, fisico: .15 },
+  'Ala-pívot': { tiro: .15, pase: .08, defensa: .22, rebote: .25, velocidad: .10, fisico: .20 },
+  'Pívot': { tiro: .08, pase: .07, defensa: .25, rebote: .30, velocidad: .05, fisico: .25 },
+};
+const HEIGHT = { 'Base': [183, 196], 'Escolta': [190, 201], 'Alero': [196, 206], 'Ala-pívot': [201, 211], 'Pívot': [206, 222] };
+const fmtHeight = cm => (cm / 100).toFixed(2).replace('.', ',') + ' m';
+
 // ---------------------------------------------------------------- Utilidades
 const $ = sel => document.querySelector(sel);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -111,12 +130,34 @@ function roleFor(rel) {
 // ---------------------------------------------------------------- Estado
 let S = null;
 
-function newCareer({ name, pos, nat, start, block }) {
+function computeOvr() {
+  const w = WEIGHTS[S.pos];
+  return clamp(Math.round(ATTRS.reduce((a, { k }) => a + w[k] * S.attrs[k], 0)), 40, 99);
+}
+function changeAttrs(map) {
+  for (const [k, v] of Object.entries(map)) S.attrs[k] = clamp(S.attrs[k] + v, 30, 99);
+  S.ovr = computeOvr();
+}
+function initAttrs(target, height) {
+  const w = WEIGHTS[S.pos], [hmin, hmax] = HEIGHT[S.pos];
+  const h = ((height - hmin) / (hmax - hmin)) * 2 - 1;   // -1 (bajo) … +1 (alto)
+  S.attrs = {};
+  ATTRS.forEach(({ k }) => { S.attrs[k] = target + (w[k] - 1 / 6) * 40 + gauss() * 4; });
+  S.attrs.rebote += 5 * h; S.attrs.defensa += 2 * h; S.attrs.fisico += 2 * h; S.attrs.velocidad -= 5 * h;
+  const cur = ATTRS.reduce((a, { k }) => a + w[k] * S.attrs[k], 0);
+  ATTRS.forEach(({ k }) => { S.attrs[k] = clamp(Math.round(S.attrs[k] + target - cur), 30, 99); });
+  S.ovr = computeOvr();
+}
+
+function newCareer({ name, pos, nat, start, block, height }) {
   TEAMS.forEach(t => { t.s = t.base; });
   S = {
-    name, pos, nat, block,
+    name, pos, nat, block, height,
     age: 18,
-    ovr: randi(58, 65),
+    ovr: 0,
+    attrs: {},
+    focus: {},                // entrenamiento específico para la próxima temporada
+    celebrations: [],
     pot: randi(76, 97),       // potencial oculto
     fame: 10,
     injuryGuard: 0,           // temporadas con menor riesgo de lesión
@@ -136,9 +177,15 @@ function newCareer({ name, pos, nat, start, block }) {
     over: false,
   };
   S.teamsPath.push(S.team.name);
+  initAttrs(randi(58, 65), height);
+  S.peak = S.ovr; S.peakAttrs = { ...S.attrs }; S.prevAttrs = { ...S.attrs };
 }
 
-function addTrophy(name, n = 1) { S.trophies[name] = (S.trophies[name] || 0) + n; }
+const CELEBRATE = /Anillo|Euroliga|Liga Endesa|Copa del Rey|Campeonato NCAA|MVP|Rookie|Most Outstanding|Oro|Plata|Bronce/;
+function addTrophy(name, n = 1) {
+  S.trophies[name] = (S.trophies[name] || 0) + n;
+  if (CELEBRATE.test(name)) S.celebrations.push({ key: name, team: /Oro|Plata|Bronce/.test(name) ? null : S.team, season: seasonLabel(S.year), summer: S.year + 1 });
+}
 
 // ---------------------------------------------------------------- Simulación de temporada
 function driftTeams() {
@@ -160,17 +207,21 @@ function simulateSeason() {
     const missed = Math.round(L.games * rand(0.1, 0.7));
     gp = L.games - missed;
     injury = missed > L.games * 0.45 ? 'Lesión grave' : 'Lesión';
-    if (missed > L.games * 0.45) S.ovr -= randi(1, 3);
+    if (missed > L.games * 0.45) changeAttrs({ velocidad: -randi(2, 5), fisico: -randi(1, 3) });
   } else {
     gp = L.games - randi(0, Math.round(L.games * 0.08));
   }
   if (S.injuryGuard > 0) S.injuryGuard--;
 
   // Estadísticas
-  const q = Math.max(2, S.ovr - 45), f = minutes / 36;
-  const ppg = q * 0.55 * prof.pts * L.scoring * f * rand(0.88, 1.12);
-  const rpg = q * 0.22 * prof.reb * f * rand(0.85, 1.15);
-  const apg = q * 0.15 * prof.ast * f * rand(0.85, 1.15);
+  const a = S.attrs, f = minutes / 36;
+  const heightScore = clamp(50 + (S.height - 200) * 2, 20, 95);
+  const qp = Math.max(2, 0.5 * S.ovr + 0.5 * a.tiro - 45);
+  const qr = Math.max(2, 0.4 * S.ovr + 0.4 * a.rebote + 0.2 * heightScore - 45);
+  const qa = Math.max(2, 0.5 * S.ovr + 0.5 * a.pase - 45);
+  const ppg = qp * 0.55 * prof.pts * L.scoring * f * rand(0.88, 1.12);
+  const rpg = qr * 0.22 * prof.reb * f * rand(0.85, 1.15);
+  const apg = qa * 0.15 * prof.ast * f * rand(0.85, 1.15);
 
   // Resultado del equipo
   const contribution = rel * f * 0.6;
@@ -253,7 +304,14 @@ function simulateSeason() {
   if (S.ovr > S.pot - 2 && delta > 0) delta *= 0.25;      // techo de potencial
   if (minutes > 28 && S.age <= 25) delta += 0.8;          // los minutos hacen crecer
   delta += S.growthBonus; S.growthBonus = 0;
-  S.ovr = clamp(Math.round(S.ovr + delta), 40, 99);
+  // Reparto por atributos: el cuerpo crece de joven y se apaga con la edad; la cabeza mejora
+  const aging = S.age <= 22 ? { velocidad: 0.5, fisico: 0.8 }
+    : S.age >= 29 ? { velocidad: -1.6, fisico: -1.0, rebote: -0.3, tiro: 0.7, pase: 0.8 } : {};
+  const changes = {};
+  ATTRS.forEach(({ k }) => { changes[k] = Math.round(delta + gauss() * 1.2 + (aging[k] || 0) + (S.focus[k] || 0)); });
+  S.focus = {};
+  changeAttrs(changes);
+  if (S.ovr >= S.peak) { S.peak = S.ovr; S.peakAttrs = { ...S.attrs }; }
 
   // Fama
   S.fame = clamp(S.fame + (role === 'Estrella' ? 6 : role === 'Titular' ? 3 : 0) + (won ? 5 : 0) + (t.league === 'NBA' ? 2 : 0), 0, 100);
@@ -266,7 +324,6 @@ function simulateSeason() {
   const sponsors = (S.fame / 100) * (t.league === 'NBA' ? 6 : 0.8);
   const earned = salary + sponsors;
   S.earnings += earned;
-  S.peak = Math.max(S.peak, S.ovr, prevOvr);
 
   const season = {
     label: seasonLabel(S.year), team: t.name, color: t.color, league: t.league,
@@ -283,8 +340,8 @@ const EVENTS = [
     title: '☀️ Verano de trabajo',
     text: 'Se acaba la temporada. ¿En qué inviertes el verano?',
     options: [
-      { label: '🎯 Mejorar el tiro', sub: 'Más progresión, más cansancio', run: () => { S.growthBonus += S.age < 30 ? 2 : 1; return 'Mil tiros diarios. Tu mecánica está más fina que nunca.'; } },
-      { label: '💪 Trabajo físico', sub: 'Menos riesgo de lesión', run: () => { S.injuryGuard = 2; S.growthBonus += 0.5; return 'Llegas a pretemporada como un toro.'; } },
+      { label: '🎯 Mejorar el tiro', sub: 'Más progresión, más cansancio', run: () => { S.focus.tiro = (S.focus.tiro || 0) + (S.age < 30 ? 4 : 2); return 'Mil tiros diarios. Tu mecánica está más fina que nunca. (🎯 Tiro ↑)'; } },
+      { label: '💪 Trabajo físico', sub: 'Menos riesgo de lesión', run: () => { S.injuryGuard = 2; S.focus.fisico = (S.focus.fisico || 0) + 3; S.focus.velocidad = (S.focus.velocidad || 0) + 1; return 'Llegas a pretemporada como un toro. (💪 Físico ↑ ⚡ Velocidad ↑)'; } },
       { label: '🏝️ Vacaciones', sub: 'Desconectar también cuenta', run: () => { S.fame += 2; return 'Ibiza, playa y fotos virales. Vuelves fresco.'; } },
     ],
   }),
@@ -292,7 +349,7 @@ const EVENTS = [
     title: '🎓 Campus con una leyenda',
     text: 'Un exjugador histórico te invita a entrenar con él en su campus de verano.',
     options: [
-      { label: 'Aceptar', sub: 'Aprender de los mejores', run: () => { const g = chance(0.7) ? 2 : 0; S.growthBonus += g; return g ? 'Te enseña un movimiento en el poste que te cambia el juego.' : 'Mucho aprender, pero poco que aplicar. Al menos la foto quedó bien.'; } },
+      { label: 'Aceptar', sub: 'Aprender de los mejores', run: () => { if (!chance(0.75)) return 'Mucho aprender, pero poco que aplicar. Al menos la foto quedó bien.'; const at = pick(ATTRS.slice(0, 4)); S.focus[at.k] = (S.focus[at.k] || 0) + 4; return `La leyenda te enseña sus secretos. (${at.icon} ${at.label} ↑↑)`; } },
       { label: 'Rechazar', sub: 'Prefieres descansar', run: () => 'Descansas en casa con la familia.' },
     ],
   }),
@@ -300,7 +357,7 @@ const EVENTS = [
     title: '📱 Polémica en redes',
     text: 'Un periodista critica tu actitud en el último partido y el tema se hace viral.',
     options: [
-      { label: 'Responder en la pista', sub: 'Que hable tu juego', run: () => { S.growthBonus += 1; return 'Te encierras en el gimnasio. La mejor respuesta es un triple.'; } },
+      { label: 'Responder en la pista', sub: 'Que hable tu juego', run: () => { S.growthBonus += 0.5; S.focus.tiro = (S.focus.tiro || 0) + 1; S.focus.defensa = (S.focus.defensa || 0) + 1; return 'Te encierras en el gimnasio. La mejor respuesta es un triple.'; } },
       { label: 'Contestar en Twitter', sub: 'Arriesgado…', run: () => { if (chance(0.5)) { S.fame += 8; return 'Tu respuesta se hace legendaria. Ganas miles de seguidores.'; } S.fame -= 5; S.growthBonus -= 1; return 'Te llueven críticas y te cuesta centrarte.'; } },
     ],
   }),
@@ -316,8 +373,8 @@ const EVENTS = [
     title: '🏥 Molestias en la rodilla',
     text: 'Los médicos detectan una pequeña lesión. Puedes operarte ahora o aguantar.',
     options: [
-      { label: 'Operarse', sub: 'Pierdes algo de forma, pero seguro', run: () => { S.ovr = Math.max(40, S.ovr - 1); S.injuryGuard = 3; return 'Operación exitosa. Rodilla como nueva.'; } },
-      { label: 'Aguantar', sub: 'Puede salir bien… o no', run: () => { if (chance(0.65)) return 'La rodilla responde. Ni te acuerdas.'; S.ovr = Math.max(40, S.ovr - 4); return 'Mala decisión: la lesión empeora y pierdes explosividad.'; } },
+      { label: 'Operarse', sub: 'Pierdes algo de forma, pero seguro', run: () => { changeAttrs({ velocidad: -2 }); S.injuryGuard = 3; return 'Operación exitosa. Rodilla como nueva. (⚡ Velocidad −2)'; } },
+      { label: 'Aguantar', sub: 'Puede salir bien… o no', run: () => { if (chance(0.65)) return 'La rodilla responde. Ni te acuerdas.'; changeAttrs({ velocidad: -5, fisico: -3 }); return 'Mala decisión: la lesión empeora y pierdes explosividad. (⚡ −5 💪 −3)'; } },
     ],
   }),
   () => ({
@@ -405,7 +462,19 @@ function renderStatus() {
         ${top.map(([k, v]) => `<span class="chip gold">${v}× ${esc(k)}</span>`).join('')}
       </div>
     </div>
-    <div class="ovr"><b>${S.ovr}</b><small>Media</small></div>`;
+    <div class="ovr"><b>${S.ovr}</b><small>Media</small></div>
+    <div class="attrs">${attrsHTML(S.attrs, S.prevAttrs)}</div>`;
+}
+
+function attrsHTML(attrs, prev) {
+  const bar = (label, val, pct, diff) => `
+    <div class="attr">
+      <span class="attr-label">${label}</span>
+      <span class="attr-bar"><i style="width:${pct}%;background:${val >= 85 ? 'var(--green)' : val >= 70 ? 'var(--orange2)' : val >= 55 ? 'var(--orange)' : 'var(--red)'}"></i></span>
+      <b>${val}${diff ? ` <small class="${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '+' : ''}${diff}</small>` : ''}</b>
+    </div>`;
+  return ATTRS.map(({ k, label, icon }) => bar(`${icon} ${label}`, attrs[k], attrs[k], prev ? attrs[k] - prev[k] : 0)).join('')
+    + `<div class="attr"><span class="attr-label">📏 Altura</span><span class="attr-bar"><i style="width:${clamp((S.height - 175) / 50 * 100, 5, 100)}%;background:#7db7ff"></i></span><b>${fmtHeight(S.height)}</b></div>`;
 }
 
 function renderLog() {
@@ -436,6 +505,7 @@ function seasonNews(list) {
 
 // ---------------------------------------------------------------- Flujo
 function playBlock() {
+  S.prevAttrs = { ...S.attrs };
   const played = [];
   for (let i = 0; i < S.block; i++) {
     played.push(simulateSeason());
@@ -443,8 +513,9 @@ function playBlock() {
     if (mustRetire()) break;
   }
   renderAll();
-  if (mustRetire()) return endCareer(mustRetire());
-  showEvent(played);
+  const next = () => (mustRetire() ? endCareer(mustRetire()) : showEvent(played));
+  const queue = S.celebrations.splice(0);
+  if (queue.length) celebrate(queue, next); else next();
 }
 
 function mustRetire() {
@@ -504,7 +575,8 @@ function showOffers(msg) {
     S.team = o.team;
     if (S.teamsPath[S.teamsPath.length - 1] !== o.team.name) S.teamsPath.push(o.team.name);
     renderStatus();
-    playBlock();
+    if (o.draft) celebrate([{ key: 'Draft', team: o.team, pick: o.draft, summer: S.year }], playBlock);
+    else playBlock();
   });
   const stay = document.querySelector('[data-stay]');
   if (stay) stay.onclick = playBlock;
@@ -553,6 +625,8 @@ function endCareer(reason) {
       <div><b>${(S.trophies['Anillo NBA'] || 0)}</b><small>Anillos</small></div>
       <div class="wide"><b>💰 ${fmtMoney(S.earnings)}</b><small>Dinero ganado</small></div>
     </div>
+    <h3>📊 Tu mejor versión (media ${peak})</h3>
+    <div class="attrs final-attrs">${attrsHTML(S.peakAttrs || S.attrs)}</div>
     <h3>🏆 Palmarés</h3>
     ${trophies.length ? `<ul class="trophies">${trophies.map(([k, v]) => `<li><b>${v}×</b>${esc(k)}</li>`).join('')}</ul>` : '<p class="muted">Sin títulos, pero con mucho corazón.</p>'}
     <h3>🧳 Trayectoria</h3>
@@ -637,6 +711,112 @@ function renderRecords() {
     </tr>`).join('') : '';
 }
 
+// ---------------------------------------------------------------- Celebraciones
+let svgId = 0;
+function artTrophy(accent, topper = '') {
+  const id = 'g' + (++svgId);
+  return `<svg viewBox="0 0 120 140" class="art">
+    <defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0" stop-color="#b8860b"/><stop offset=".45" stop-color="#ffe680"/><stop offset="1" stop-color="#c9971c"/></linearGradient></defs>
+    <path d="M30 28 H14 C12 52 24 62 36 64" fill="none" stroke="url(#${id})" stroke-width="7" stroke-linecap="round"/>
+    <path d="M90 28 H106 C108 52 96 62 84 64" fill="none" stroke="url(#${id})" stroke-width="7" stroke-linecap="round"/>
+    <path d="M28 14 H92 V46 C92 72 76 86 60 89 C44 86 28 72 28 46 Z" fill="url(#${id})"/>
+    <circle cx="60" cy="46" r="15" fill="${accent}" opacity=".9"/>
+    <path d="M45 46 H75 M60 31 V61 M49 35 C56 42 56 50 49 57 M71 35 C64 42 64 50 71 57" stroke="#1a1000" stroke-width="2" fill="none" opacity=".6"/>
+    <rect x="53" y="88" width="14" height="18" fill="url(#${id})"/>
+    <rect x="38" y="104" width="44" height="10" rx="3" fill="url(#${id})"/>
+    <rect x="30" y="113" width="60" height="20" rx="4" fill="#2a2a2a"/>
+    <rect x="30" y="120" width="60" height="5" fill="${accent}"/>
+    ${topper === 'crown' ? `<path d="M40 14 L44 0 L52 9 L60 -2 L68 9 L76 0 L80 14 Z" fill="url(#${id})" stroke="#8a6500" stroke-width="1.5" transform="translate(0 2)"/><circle cx="60" cy="4" r="2.5" fill="#c60b1e"/>` : ''}
+    ${topper === 'star' ? `<polygon points="60,0 63.5,8 72,8.5 65.5,13.5 68,22 60,17 52,22 54.5,13.5 48,8.5 56.5,8" fill="#fff" stroke="${accent}" stroke-width="1.5"/>` : ''}
+  </svg>`;
+}
+function artRing(team) {
+  const id = 'g' + (++svgId);
+  const t = team || { color: '#552583', abbr: 'NBA' };
+  return `<svg viewBox="0 0 120 140" class="art">
+    <defs><linearGradient id="${id}" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset=".5" stop-color="#d4a017"/><stop offset="1" stop-color="#fff2b0"/></linearGradient></defs>
+    <ellipse cx="60" cy="92" rx="38" ry="36" fill="none" stroke="url(#${id})" stroke-width="13"/>
+    <rect x="28" y="16" width="64" height="58" rx="14" fill="url(#${id})"/>
+    <rect x="36" y="24" width="48" height="42" rx="9" fill="${t.color}"/>
+    <text x="60" y="52" text-anchor="middle" font-size="${t.abbr.length > 3 ? 13 : 17}" font-weight="900" fill="#fff" font-family="system-ui">${esc(t.abbr)}</text>
+    ${[34, 46, 60, 74, 86].map(x => `<circle cx="${x}" cy="20" r="3.2" fill="#fff"/>`).join('')}
+    ${[30, 90].map(x => `<circle cx="${x}" cy="45" r="3" fill="#fff"/>`).join('')}
+  </svg>`;
+}
+function artStar(text) {
+  const id = 'g' + (++svgId);
+  return `<svg viewBox="0 0 120 140" class="art">
+    <defs><radialGradient id="${id}"><stop offset="0" stop-color="#fff6c2"/><stop offset="1" stop-color="#e0a800"/></radialGradient></defs>
+    <polygon points="60,8 75,48 118,50 84,76 96,118 60,94 24,118 36,76 2,50 45,48" fill="url(#${id})" stroke="#8a6500" stroke-width="2"/>
+    <text x="60" y="76" text-anchor="middle" font-size="${text.length > 3 ? 15 : 21}" font-weight="900" fill="#3a2700" font-family="system-ui">${esc(text)}</text>
+    <rect x="30" y="122" width="60" height="12" rx="6" fill="#2a2a2a"/>
+  </svg>`;
+}
+function artMedal(metal) {
+  const col = { Oro: ['#fff2a8', '#d4a017'], Plata: ['#ffffff', '#9aa3b0'], Bronce: ['#f3c08a', '#a0612b'] }[metal];
+  const id = 'g' + (++svgId);
+  return `<svg viewBox="0 0 120 140" class="art">
+    <defs><radialGradient id="${id}" cx=".35" cy=".35"><stop offset="0" stop-color="${col[0]}"/><stop offset="1" stop-color="${col[1]}"/></radialGradient></defs>
+    <polygon points="30,0 52,0 66,58 46,58" fill="#c60b1e"/><polygon points="68,0 90,0 74,58 54,58" fill="#c60b1e"/>
+    <polygon points="36,0 46,0 58,50 50,50" fill="#ffc400"/><polygon points="74,0 84,0 70,50 62,50" fill="#ffc400"/>
+    <circle cx="60" cy="94" r="38" fill="url(#${id})" stroke="${col[1]}" stroke-width="4"/>
+    <circle cx="60" cy="94" r="28" fill="none" stroke="${col[0]}" stroke-width="2" opacity=".7"/>
+    <text x="60" y="104" text-anchor="middle" font-size="28" fill="${col[1]}" font-family="system-ui">🏀</text>
+  </svg>`;
+}
+function artJersey(team, number) {
+  const fg = isLight(team.color) ? '#111' : '#fff';
+  return `<svg viewBox="0 0 120 140" class="art">
+    <path d="M38 8 C44 18 76 18 82 8 L104 18 C100 34 100 44 102 56 L92 60 V132 H28 V60 L18 56 C20 44 20 34 16 18 Z" fill="${team.color}" stroke="${team.color2}" stroke-width="4"/>
+    <path d="M42 10 C48 24 72 24 78 10" fill="none" stroke="${team.color2}" stroke-width="5"/>
+    <text x="60" y="56" text-anchor="middle" font-size="12" font-weight="800" fill="${fg}" font-family="system-ui">${esc(team.abbr)}</text>
+    <text x="60" y="104" text-anchor="middle" font-size="44" font-weight="900" fill="${fg}" stroke="${team.color2}" stroke-width="1.5" font-family="system-ui">${number}</text>
+  </svg>`;
+}
+
+function celebrationInfo(c) {
+  const k = c.key, t = c.team;
+  if (k === 'Draft') return { art: artJersey(t, c.pick), kicker: `Draft NBA ${c.summer}`, title: c.pick === 1 ? '¡NÚMERO 1 DEL DRAFT!' : '¡ELEGIDO EN EL DRAFT!', sub: `${t.name} te elige con el pick nº ${c.pick}` };
+  if (k === 'Anillo NBA') return { art: artRing(t), kicker: `Temporada ${c.season}`, title: '¡CAMPEÓN DE LA NBA!', sub: `Ganas el anillo con ${t.name}` };
+  const cups = { 'Euroliga': ['¡CAMPEÓN DE EUROPA!', '#ff6b00', 'star'], 'Liga Endesa': ['¡CAMPEÓN DE LIGA!', '#f08a00', ''], 'Copa del Rey': ['¡CAMPEÓN DE COPA!', '#c60b1e', 'crown'], 'Campeonato NCAA': ['¡CAMPEÓN NCAA!', '#1d428a', ''] };
+  if (cups[k]) return { art: artTrophy(cups[k][1], cups[k][2]), kicker: `${k} · ${c.season}`, title: cups[k][0], sub: `Con ${t.name}` };
+  const metal = (k.match(/^(Oro|Plata|Bronce)/) || [])[1];
+  if (metal) return { art: artMedal(metal), kicker: `🇪🇸 Selección española · ${c.summer}`, title: `¡${k.toUpperCase()}!`, sub: metal === 'Oro' ? '¡Campeones con España!' : 'Medalla con España' };
+  const starText = /Rookie/.test(k) ? 'ROY' : /Most Outstanding/.test(k) ? 'MOP' : 'MVP';
+  return { art: artStar(starText), kicker: `Premio individual · ${c.season}`, title: `¡${k.toUpperCase()}!`, sub: t ? `Jugando en ${t.name}` : '' };
+}
+
+function celebrate(queue, done) {
+  let i = 0;
+  const ov = document.createElement('div');
+  ov.className = 'celebration';
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); done(); };
+  const render = () => {
+    const c = queue[i], info = celebrationInfo(c);
+    const colors = c.team ? [c.team.color, c.team.color2, '#ffd34d', '#ffffff'] : ['#c60b1e', '#ffc400', '#ffffff', '#ffd34d'];
+    const confetti = Array.from({ length: 46 }, () => `<i style="left:${rand(0, 100)}%;background:${pick(colors)};animation-delay:${rand(0, .9).toFixed(2)}s;animation-duration:${rand(1.8, 3.2).toFixed(2)}s;transform:rotate(${randi(0, 360)}deg);width:${randi(6, 11)}px;height:${randi(10, 16)}px"></i>`).join('');
+    ov.innerHTML = `
+      <div class="confetti">${confetti}</div>
+      <div class="cel-card">
+        <div class="cel-rays"></div>
+        <div class="cel-art">${info.art}</div>
+        ${c.team ? `<div class="cel-crest">${crest(c.team, 34)}</div>` : ''}
+        <small class="cel-kicker">${esc(info.kicker)}</small>
+        <h2 class="cel-title">${esc(info.title)}</h2>
+        <p class="cel-sub">${esc(info.sub)}</p>
+        <div class="actions center">
+          <button class="btn primary" data-cel="next">${i < queue.length - 1 ? `Siguiente (${i + 1}/${queue.length}) ▶` : '¡Vamos! ▶'}</button>
+          ${queue.length - i > 1 ? '<button class="btn" data-cel="skip">Saltar todas</button>' : ''}
+        </div>
+      </div>`;
+    ov.querySelector('[data-cel=next]').onclick = () => { i++; if (i < queue.length) render(); else close(); };
+    const sk = ov.querySelector('[data-cel=skip]');
+    if (sk) sk.onclick = close;
+  };
+  render();
+}
+
 function toast(msg) {
   const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg;
   document.body.appendChild(el); setTimeout(() => el.remove(), 1800);
@@ -649,10 +829,19 @@ function init() {
   sel.innerHTML = Object.entries(groups).map(([lg, label]) =>
     `<optgroup label="${label}">${TEAMS.filter(t => t.league === lg).map(t => `<option>${esc(t.name)}</option>`).join('')}</optgroup>`).join('');
 
+  const syncHeight = () => {
+    const [mn, mx] = HEIGHT[$('#f-pos').value], r = $('#f-height');
+    r.min = mn; r.max = mx; r.value = Math.round((mn + mx) / 2); $('#f-height-out').textContent = fmtHeight(+r.value);
+  };
+  $('#f-pos').addEventListener('change', syncHeight);
+  $('#f-height').addEventListener('input', () => { $('#f-height-out').textContent = fmtHeight(+$('#f-height').value); });
+  syncHeight();
+
   $('#form-start').addEventListener('submit', e => {
     e.preventDefault();
     const name = $('#f-name').value.trim() || 'Jugador Anónimo';
     newCareer({
+      height: +$('#f-height').value,
       name, pos: $('#f-pos').value, nat: $('#f-nat').value, start: sel.value,
       block: +document.querySelector('input[name=mode]:checked').value,
     });
