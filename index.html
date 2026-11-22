@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Basquet.fun · Del Barrio al Anillo</title>
+  <meta name="description" content="Simulador de carrera de baloncesto: crea tu jugador, elige equipos de la ACB y la NBA y conviértete en leyenda." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🏀 <span>Basquet</span>.fun</div>
+    <nav>
+      <button class="link" data-goto="start">Nueva carrera</button>
+      <button class="link" data-goto="hof">Salón de la Fama</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- INICIO -->
+    <section id="screen-start" class="screen active">
+      <div class="hero">
+        <p class="kicker">Simulador de carrera · ACB · Euroliga · NBA · Selección</p>
+        <h1>Del Barrio <em>al Anillo</em></h1>
+        <p class="sub">Crea a tu jugador, toma decisiones y descubre si acabas levantando la Copa del Rey, la Euroliga o un anillo de la NBA.</p>
+      </div>
+
+      <form id="form-start" class="card form">
+        <label>Nombre del jugador
+          <input id="f-name" maxlength="28" placeholder="Ej: Pau Navarro" required />
+        </label>
+
+        <div class="row">
+          <label>Posición
+            <select id="f-pos">
+              <option>Base</option><option>Escolta</option><option selected>Alero</option>
+              <option>Ala-pívot</option><option>Pívot</option>
+            </select>
+          </label>
+          <label>Nacionalidad
+            <select id="f-nat">
+              <option value="España" selected>🇪🇸 España</option>
+              <option value="Argentina">🇦🇷 Argentina</option>
+              <option value="México">🇲🇽 México</option>
+              <option value="EE. UU.">🇺🇸 EE. UU.</option>
+              <option value="Francia">🇫🇷 Francia</option>
+              <option value="Otro">🌍 Otro</option>
+            </select>
+          </label>
+        </div>
+
+        <label>¿Dónde empiezas?
+          <select id="f-start"></select>
+        </label>
+
+        <fieldset>
+          <legend>Modo de carrera</legend>
+          <div class="modes">
+            <label class="mode"><input type="radio" name="mode" value="3" /><b>Exprés</b><small>Decides cada 3 temporadas</small></label>
+            <label class="mode"><input type="radio" name="mode" value="2" checked /><b>Normal</b><small>Decides cada 2 temporadas</small></label>
+            <label class="mode"><input type="radio" name="mode" value="1" /><b>Intensa</b><small>Decides cada temporada</small></label>
+          </div>
+        </fieldset>
+
+        <button class="btn primary big" type="submit">¡Saltar a la pista! 🏀</button>
+      </form>
+    </section>
+
+    <!-- PARTIDA -->
+    <section id="screen-game" class="screen">
+      <div class="card status" id="status"></div>
+      <div class="card panel" id="panel"></div>
+      <div class="card">
+        <h3>Historial de temporadas</h3>
+        <div class="table-wrap">
+          <table class="log">
+            <thead>
+              <tr><th>Temp.</th><th>Equipo</th><th>Edad</th><th>MED</th><th>PJ</th><th>PTS</th><th>REB</th><th>AST</th><th>Rol</th><th>Resultado</th></tr>
+            </thead>
+            <tbody id="log"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINAL -->
+    <section id="screen-end" class="screen">
+      <div id="final-card" class="final"></div>
+      <div class="actions center">
+        <button class="btn" id="btn-copy">📋 Copiar resumen</button>
+        <button class="btn primary" data-goto="start">Jugar otra carrera</button>
+      </div>
+    </section>
+
+    <!-- SALÓN DE LA FAMA -->
+    <section id="screen-hof" class="screen">
+      <div class="card">
+        <h2>🏛️ Salón de la Fama</h2>
+        <p class="muted">Tus 10 mejores carreras (guardadas en este navegador).</p>
+        <ol id="hof-list" class="hof"></ol>
+        <div class="actions"><button class="btn" id="btn-clear-hof">Borrar salón</button></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">Basquet.fun · Juego de ficción. Los resultados son simulados y no reflejan la realidad.</footer>
+  <script src="app.js"></script>
+</body>
+</html>
