@@ -98,7 +98,11 @@ const weightedPick = (items, weightFn) => {
   return items[items.length - 1];
 };
 const seasonLabel = y => `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
-const fmtMoney = m => m >= 1 ? `${m.toFixed(1).replace('.', ',')} M€` : `${Math.round(m * 1000)} mil €`;
+const fmtMoney = m => {
+  const neg = m < 0, a = Math.abs(m);
+  const txt = a >= 1 ? `${a.toFixed(a >= 10 ? 1 : 2).replace('.', ',')} M€` : `${Math.round(a * 1000)} mil €`;
+  return (neg ? '−' : '') + txt;
+};
 
 // Escudo generado (SVG) con los colores y siglas del equipo — no son logos oficiales
 function isLight(hex) {
@@ -367,80 +371,181 @@ function simulateSeason() {
   return season;
 }
 
-// ---------------------------------------------------------------- Eventos (decisiones entre bloques)
+// ---------------------------------------------------------------- Efectos (lo que suma o resta cada decisión)
+// fx = { attrs: { tiro: 2, ... }, fatigue, money (M€), fame, pot, guard }
+const nba = () => S.team.league === 'NBA';
+const cash = (acb, nbaVal) => (nba() ? nbaVal : acb);
+const one = (fx, msg) => [{ p: 1, fx, msg }];
+
+function applyFx(fx = {}) {
+  if (fx.attrs) changeAttrs(fx.attrs);
+  if (fx.fatigue) S.fatigue = clamp(S.fatigue + fx.fatigue, 0, 100);
+  if (fx.money) S.earnings += fx.money;
+  if (fx.fame) S.fame = clamp(S.fame + fx.fame, 0, 100);
+  if (fx.pot) S.pot += fx.pot;
+  if (fx.guard) S.injuryGuard = Math.max(S.injuryGuard, fx.guard);
+}
+
+function fxHTML(fx = {}) {
+  const chips = [];
+  const sign = v => (v > 0 ? '+' : '−') + Math.abs(v);
+  for (const [k, v] of Object.entries(fx.attrs || {})) {
+    if (!v) continue;
+    const a = ATTRS.find(x => x.k === k);
+    chips.push(`<span class="fx ${v > 0 ? 'pos' : 'neg'}">${a.icon} ${a.label} ${sign(v)}</span>`);
+  }
+  if (fx.pot) chips.push(`<span class="fx pos">🌱 Potencial ${sign(fx.pot)}</span>`);
+  if (fx.fatigue) chips.push(`<span class="fx ${fx.fatigue > 0 ? 'neg' : 'pos'}">🥵 Cansancio ${sign(fx.fatigue)}</span>`);
+  if (fx.money) chips.push(`<span class="fx ${fx.money > 0 ? 'pos' : 'neg'}">💰 ${fx.money > 0 ? '+' : '−'}${fmtMoney(Math.abs(fx.money))}</span>`);
+  if (fx.fame) chips.push(`<span class="fx ${fx.fame > 0 ? 'pos' : 'neg'}">⭐ Fama ${sign(fx.fame)}</span>`);
+  if (fx.guard) chips.push('<span class="fx pos">🩹 Menos riesgo de lesión</span>');
+  return chips.length ? chips.join('') : '<span class="fx">Sin cambios</span>';
+}
+
+function outcomesHTML(outcomes) {
+  if (outcomes.length === 1) return `<div class="fxs">${fxHTML(outcomes[0].fx)}</div>`;
+  return outcomes.map(o => `<div class="fxs"><span class="prob">${Math.round(o.p * 100)}%</span>${fxHTML(o.fx)}</div>`).join('');
+}
+
+function runOption(opt) {
+  let r = Math.random(), chosen = opt.outcomes[opt.outcomes.length - 1];
+  for (const o of opt.outcomes) { if (r < o.p) { chosen = o; break; } r -= o.p; }
+  applyFx(chosen.fx);
+  return { msg: chosen.msg, fx: chosen.fx };
+}
+
+// ---------------------------------------------------------------- Entrenamientos de verano (cambian cada vez)
+const TRAININGS = {
+  tiro: { name: 'Sesiones de tiro', icon: '🎯', pair: 'pase', msg: 'Mil tiros diarios. Tu mecánica está más fina que nunca.' },
+  pase: { name: 'Clínic de dirección de juego', icon: '🤝', pair: 'tiro', msg: 'Lees el juego un segundo antes que los demás.' },
+  defensa: { name: 'Campus defensivo', icon: '🛡️', pair: 'velocidad', msg: 'Piernas flexionadas y manos activas: ahora eres un candado.' },
+  rebote: { name: 'Trabajo de rebote y poste', icon: '🙌', pair: 'fisico', msg: 'Cajear, saltar, asegurar. El rebote es tuyo.' },
+  velocidad: { name: 'Pliometría y velocidad', icon: '⚡', pair: 'fisico', msg: 'Tu primer paso es más explosivo que nunca.' },
+  fisico: { name: 'Gimnasio y musculación', icon: '💪', pair: 'rebote', msg: 'Llegas a pretemporada como un toro.' },
+};
+const LEVELS = [
+  { tag: 'suave', gain: 2, pair: 0, fatigue: 8, cost: () => cash(0.01, 0.03) },
+  { tag: 'intensivo', gain: 4, pair: 0, fatigue: 20, cost: () => cash(0.03, 0.1) },
+  { tag: 'con entrenador privado', gain: 4, pair: 2, fatigue: 14, cost: () => cash(0.12, 0.6) },
+];
+
+function trainingOption(k, lv) {
+  const t = TRAININGS[k];
+  let gain = lv.gain, pairGain = lv.pair;
+  const physical = k === 'velocidad' || k === 'fisico';
+  if (S.age >= 30 && physical) gain = Math.max(1, gain - 2);          // de veterano cuesta más ganar físico
+  if (S.age >= 30 && !physical) gain += 1;                            // pero la técnica sigue mejorando
+  const attrs = { [k]: gain };
+  if (pairGain) attrs[t.pair] = pairGain;
+  const fx = { attrs, fatigue: lv.fatigue, money: -lv.cost() };
+  if (k === 'fisico') fx.guard = 1;
+  return { label: `${t.icon} ${t.name} (${lv.tag})`, sub: '', outcomes: one(fx, t.msg) };
+}
+
+function summerOptions() {
+  const keys = shuffle(Object.keys(TRAININGS)).slice(0, 3);
+  const levels = shuffle(LEVELS);
+  const opts = keys.map((k, i) => trainingOption(k, levels[i]));
+  // Liga de verano: mejora tu peor atributo
+  const worst = ATTRS.reduce((m, a) => (S.attrs[a.k] < S.attrs[m.k] ? a : m));
+  if (chance(0.5)) opts.push({ label: '🏀 Liga de verano', sub: `Trabajas tu punto débil: ${worst.label.toLowerCase()}`, outcomes: one({ attrs: { [worst.k]: 3 }, fatigue: 25, money: cash(0.01, 0.05) }, 'Partidos y más partidos en verano.') });
+  opts.push({ label: '🏝️ Vacaciones', sub: 'Desconectar del todo', outcomes: one({ fatigue: -45, money: -cash(0.03, 0.25), fame: 1 }, 'Playa, familia y cero balones. Vuelves con las pilas cargadas. 🔋') });
+  opts.push({ label: '🏠 Descanso en casa', sub: 'Gratis, pero recuperas menos', outcomes: one({ fatigue: -28 }, 'Sofá, series y paseos. Recuperas bastante.') });
+  return opts;
+}
+
+// ---------------------------------------------------------------- Eventos aleatorios
 const EVENTS = [
-  () => ({
-    title: '🍾 Noche de fiesta',
-    text: 'Tus compañeros te invitan a celebrar a lo grande… a dos días del inicio de la pretemporada.',
-    options: [
-      { label: 'Ir a la fiesta', sub: 'Una noche no hace daño… ¿o sí?', run: () => { S.fame += 3; if (chance(0.45)) { S.fatigue += 15; changeAttrs({ fisico: -2, velocidad: -1 }); return 'Llegas a la pretemporada fuera de forma y el entrenador se da cuenta. (💪 −2 ⚡ −1)'; } return 'Gran noche y nadie se entera. Te has librado.'; } },
-      { label: 'Quedarte en casa', sub: 'Profesional', run: () => 'A dormir pronto. El cuerpo te lo agradece.' },
-    ],
-  }),
-  () => ({
-    title: '😤 Bronca con el entrenador',
-    text: 'El entrenador te critica delante del vestuario por tu defensa.',
-    options: [
-      { label: 'Agachar la cabeza y trabajar', sub: 'Humildad', run: () => { S.focus.defensa = (S.focus.defensa || 0) + 2; return 'Te pones las pilas atrás. (🛡️ Defensa ↑)'; } },
-      { label: 'Encararte con él', sub: 'Que sepa quién manda', run: () => { if (chance(0.6)) { S.growthBonus -= 2; S.fame -= 4; return 'Te manda al fondo del banquillo durante semanas. Mal asunto.'; } S.fame += 4; return 'El vestuario se pone de tu lado. Ganas galones.'; } },
-    ],
-  }),
-  () => ({
-    title: '📉 Bajón de confianza',
-    text: 'Llevas semanas sin meter un tiro y la prensa empieza a hablar de "jugador quemado".',
-    options: [
-      { label: 'Psicólogo deportivo', sub: 'Trabajar la cabeza', run: () => { if (chance(0.7)) return 'Recuperas la confianza poco a poco.'; S.growthBonus -= 1; return 'Te cuesta salir del pozo.'; } },
-      { label: 'Ignorarlo y tirar más', sub: 'Ya entrarán', run: () => { if (chance(0.5)) { S.focus.tiro = (S.focus.tiro || 0) + 2; return '¡Vuelves a enchufarlas! (🎯 Tiro ↑)'; } S.focus.tiro = (S.focus.tiro || 0) - 3; return 'Cada vez peor. Tu mecánica se resiente. (🎯 Tiro ↓)'; } },
-    ],
-  }),
-  () => ({
-    title: '🌱 ¿Estirón tardío?',
-    text: 'Los preparadores ven algo distinto en ti este verano.',
-    options: [
-      { label: 'Doble sesión diaria', sub: 'A por todas (+cansancio)', run: () => { S.fatigue += 15; if (S.age <= 23 && chance(0.6)) { S.pot += randi(3, 6); return '¡Explotas! Tu techo como jugador es más alto de lo que nadie pensaba.'; } S.growthBonus += 0.5; return 'Mucho sudor para una mejora pequeña.'; } },
-      { label: 'Ir con calma', sub: 'Sin forzar', run: () => { S.fatigue -= 10; return 'Ritmo tranquilo. Llegas descansado.'; } },
-    ],
-  }),
-  () => ({
-    title: '🎓 Campus con una leyenda',
-    text: 'Un exjugador histórico te invita a entrenar con él en su campus de verano.',
-    options: [
-      { label: 'Aceptar', sub: 'Aprender de los mejores', run: () => { if (!chance(0.75)) return 'Mucho aprender, pero poco que aplicar. Al menos la foto quedó bien.'; const at = pick(ATTRS.slice(0, 4)); S.focus[at.k] = (S.focus[at.k] || 0) + 4; return `La leyenda te enseña sus secretos. (${at.icon} ${at.label} ↑↑)`; } },
-      { label: 'Rechazar', sub: 'Prefieres descansar', run: () => 'Descansas en casa con la familia.' },
-    ],
-  }),
-  () => ({
-    title: '📱 Polémica en redes',
-    text: 'Un periodista critica tu actitud en el último partido y el tema se hace viral.',
-    options: [
-      { label: 'Responder en la pista', sub: 'Que hable tu juego', run: () => { S.growthBonus += 0.5; S.focus.tiro = (S.focus.tiro || 0) + 1; S.focus.defensa = (S.focus.defensa || 0) + 1; return 'Te encierras en el gimnasio. La mejor respuesta es un triple.'; } },
-      { label: 'Contestar en Twitter', sub: 'Arriesgado…', run: () => { if (chance(0.5)) { S.fame += 8; return 'Tu respuesta se hace legendaria. Ganas miles de seguidores.'; } S.fame -= 5; S.growthBonus -= 1; return 'Te llueven críticas y te cuesta centrarte.'; } },
-    ],
-  }),
-  () => ({
-    title: '💼 Oferta de patrocinio',
-    text: 'Una marca de zapatillas quiere sacar tu modelo propio.',
-    options: [
-      { label: 'Firmar', sub: '+ fama, más compromisos', run: () => { S.fame += 6; S.earnings += 0.5 + S.fame / 40; if (chance(0.3)) { S.growthBonus -= 1; return 'Las zapatillas se venden genial, aunque los eventos te quitan horas de entreno.'; } return '¡Tus zapatillas se agotan en dos días!'; } },
-      { label: 'Rechazar', sub: 'Solo baloncesto', run: () => { S.growthBonus += 0.5; return 'Sigues centrado al 100% en la pista.'; } },
-    ],
-  }),
-  () => ({
-    title: '🏥 Molestias en la rodilla',
-    text: 'Los médicos detectan una pequeña lesión. Puedes operarte ahora o aguantar.',
-    options: [
-      { label: 'Operarse', sub: 'Pierdes algo de forma, pero seguro', run: () => { changeAttrs({ velocidad: -2 }); S.injuryGuard = 3; return 'Operación exitosa. Rodilla como nueva. (⚡ Velocidad −2)'; } },
-      { label: 'Aguantar', sub: 'Puede salir bien… o no', run: () => { if (chance(0.65)) return 'La rodilla responde. Ni te acuerdas.'; changeAttrs({ velocidad: -5, fisico: -3 }); return 'Mala decisión: la lesión empeora y pierdes explosividad. (⚡ −5 💪 −3)'; } },
-    ],
-  }),
-  () => ({
-    title: '🧠 Nuevo entrenador personal',
-    text: 'Un preparador conocido por trabajar con estrellas NBA quiere entrenarte.',
-    options: [
-      { label: 'Contratarlo', sub: 'Caro, pero efectivo', run: () => { S.growthBonus += 1.5; return 'Nuevos hábitos, nueva dieta, nuevo jugador.'; } },
-      { label: 'Seguir con el de siempre', sub: 'La confianza vale mucho', run: () => { S.growthBonus += 0.5; S.fame += 1; return 'Tu entrenador de siempre te conoce mejor que nadie.'; } },
-    ],
-  }),
+  () => {
+    const at = pick(ATTRS.slice(0, 4));
+    return { title: '🎓 Campus con una leyenda', text: 'Un exjugador histórico te invita a entrenar con él en su campus de verano (el viaje lo pagas tú).', options: [
+      { label: 'Aceptar', sub: 'Aprender de los mejores', outcomes: [
+        { p: 0.75, fx: { attrs: { [at.k]: 4 }, fatigue: 10, money: -cash(0.02, 0.06) }, msg: 'La leyenda te enseña sus secretos.' },
+        { p: 0.25, fx: { fatigue: 10, money: -cash(0.02, 0.06) }, msg: 'Mucho aprender, pero poco que aplicar. Al menos la foto quedó bien.' }] },
+      { label: 'Rechazar', sub: 'Prefieres descansar', outcomes: one({ fatigue: -10 }, 'Descansas en casa con la familia.') },
+    ] };
+  },
+  () => ({ title: '📱 Polémica en redes', text: 'Un periodista critica tu actitud en el último partido y el tema se hace viral.', options: [
+    { label: 'Responder en la pista', sub: 'Que hable tu juego', outcomes: one({ attrs: { tiro: 1, defensa: 1 }, fatigue: 5 }, 'Te encierras en el gimnasio. La mejor respuesta es un triple.') },
+    { label: 'Contestar en Twitter', sub: 'Arriesgado…', outcomes: [
+      { p: 0.5, fx: { fame: 8, money: cash(0.03, 0.2) }, msg: 'Tu respuesta se hace legendaria. Ganas seguidores y una marca te paga por un post.' },
+      { p: 0.5, fx: { fame: -5, attrs: { tiro: -1, pase: -1 } }, msg: 'Te llueven críticas y te cuesta centrarte.' }] },
+  ] }),
+  () => {
+    const pay = Math.round((cash(0.15, 1.2) + S.fame * cash(0.004, 0.04)) * 100) / 100;
+    return { title: '👟 Oferta de patrocinio', text: 'Una marca de zapatillas quiere sacar tu modelo propio.', options: [
+      { label: 'Firmar', sub: 'Dinero y fama, pero más compromisos', outcomes: [
+        { p: 0.7, fx: { money: pay, fame: 6 }, msg: '¡Tus zapatillas se agotan en dos días!' },
+        { p: 0.3, fx: { money: pay, fame: 6, fatigue: 12, attrs: { fisico: -1 } }, msg: 'Se venden genial, aunque los eventos te quitan horas de entreno.' }] },
+      { label: 'Rechazar', sub: 'Solo baloncesto', outcomes: one({ attrs: { tiro: 1 } }, 'Sigues centrado al 100% en la pista.') },
+    ] };
+  },
+  () => ({ title: '🏥 Molestias en la rodilla', text: 'Los médicos detectan una pequeña lesión. Puedes operarte ahora o aguantar.', options: [
+    { label: 'Operarse', sub: 'Pierdes algo de forma, pero seguro', outcomes: one({ attrs: { velocidad: -2 }, fatigue: -15, guard: 3 }, 'Operación exitosa. Rodilla como nueva.') },
+    { label: 'Aguantar', sub: 'Puede salir bien… o no', outcomes: [
+      { p: 0.65, fx: {}, msg: 'La rodilla responde. Ni te acuerdas.' },
+      { p: 0.35, fx: { attrs: { velocidad: -5, fisico: -3 }, fatigue: 10 }, msg: 'Mala decisión: la lesión empeora y pierdes explosividad.' }] },
+  ] }),
+  () => {
+    const [a1, a2] = shuffle(ATTRS).slice(0, 2);
+    return { title: '🧠 Nuevo entrenador personal', text: 'Un preparador conocido por trabajar con estrellas NBA quiere entrenarte.', options: [
+      { label: 'Contratarlo', sub: 'Caro, pero efectivo', outcomes: one({ attrs: { [a1.k]: 2, [a2.k]: 2 }, fatigue: 8, money: -cash(0.15, 0.9) }, 'Nuevos hábitos, nueva dieta, nuevo jugador.') },
+      { label: 'Seguir con el de siempre', sub: 'La confianza vale mucho', outcomes: one({ attrs: { pase: 1 }, fame: 1 }, 'Tu entrenador de siempre te conoce mejor que nadie.') },
+    ] };
+  },
+  () => ({ title: '🍾 Noche de fiesta', text: 'Tus compañeros te invitan a celebrar a lo grande… a dos días del inicio de la pretemporada.', options: [
+    { label: 'Ir a la fiesta', sub: 'Una noche no hace daño… ¿o sí?', outcomes: [
+      { p: 0.55, fx: { fame: 3, fatigue: 5, money: -cash(0.005, 0.03) }, msg: 'Gran noche y nadie se entera. Te has librado.' },
+      { p: 0.45, fx: { fame: 3, fatigue: 15, attrs: { fisico: -2, velocidad: -1 }, money: -cash(0.03, 0.15) }, msg: 'Llegas fuera de forma, el club se entera y te multa.' }] },
+    { label: 'Quedarte en casa', sub: 'Profesional', outcomes: one({ fatigue: -5 }, 'A dormir pronto. El cuerpo te lo agradece.') },
+  ] }),
+  () => {
+    const fine = Math.round(salaryM(S.team) * 0.05 * 100) / 100 || 0.01;
+    return { title: '😤 Bronca con el entrenador', text: 'El entrenador te critica delante del vestuario por tu defensa.', options: [
+      { label: 'Agachar la cabeza y trabajar', sub: 'Humildad', outcomes: one({ attrs: { defensa: 2 }, fatigue: 5 }, 'Te pones las pilas atrás.') },
+      { label: 'Encararte con él', sub: 'Que sepa quién manda', outcomes: [
+        { p: 0.6, fx: { fame: -4, money: -fine, attrs: { tiro: -1, pase: -1 } }, msg: 'Multa y al fondo del banquillo durante semanas. Mal asunto.' },
+        { p: 0.4, fx: { fame: 4 }, msg: 'El vestuario se pone de tu lado. Ganas galones.' }] },
+    ] };
+  },
+  () => ({ title: '📉 Bajón de confianza', text: 'Llevas semanas sin meter un tiro y la prensa empieza a hablar de "jugador quemado".', options: [
+    { label: 'Psicólogo deportivo', sub: 'Trabajar la cabeza', outcomes: [
+      { p: 0.7, fx: { money: -cash(0.02, 0.05), attrs: { tiro: 1 } }, msg: 'Recuperas la confianza poco a poco.' },
+      { p: 0.3, fx: { money: -cash(0.02, 0.05), attrs: { tiro: -1 } }, msg: 'Te cuesta salir del pozo.' }] },
+    { label: 'Ignorarlo y tirar más', sub: 'Ya entrarán', outcomes: [
+      { p: 0.5, fx: { attrs: { tiro: 2 } }, msg: '¡Vuelves a enchufarlas!' },
+      { p: 0.5, fx: { attrs: { tiro: -3 } }, msg: 'Cada vez peor. Tu mecánica se resiente.' }] },
+  ] }),
+  () => {
+    const young = S.age <= 23;
+    return { title: '🌱 ¿Estirón tardío?', text: 'Los preparadores ven algo distinto en ti este verano.', options: [
+      { label: 'Doble sesión diaria', sub: young ? 'A por todas' : 'A tu edad ya no creces, pero algo ganas', outcomes: young ? [
+        { p: 0.6, fx: { pot: 4, fatigue: 15 }, msg: '¡Explotas! Tu techo como jugador es más alto de lo que nadie pensaba.' },
+        { p: 0.4, fx: { attrs: { fisico: 1 }, fatigue: 15 }, msg: 'Mucho sudor para una mejora pequeña.' }]
+        : one({ attrs: { fisico: 1 }, fatigue: 15 }, 'Mucho sudor para una mejora pequeña.') },
+      { label: 'Ir con calma', sub: 'Sin forzar', outcomes: one({ fatigue: -10 }, 'Ritmo tranquilo. Llegas descansado.') },
+    ] };
+  },
+  () => {
+    const inv = cash(0.2, 2);
+    return { title: '🍔 Propuesta de negocio', text: 'Un amigo de la infancia te propone invertir en su cadena de hamburgueserías.', options: [
+      { label: `Invertir ${fmtMoney(inv)}`, sub: 'Puede salir muy bien… o muy mal', outcomes: [
+        { p: 0.45, fx: { money: inv * 1.5 }, msg: '¡Las hamburguesas triunfan! Recuperas la inversión y ganas un 150% más.' },
+        { p: 0.55, fx: { money: -inv }, msg: 'El negocio cierra a los seis meses. Adiós al dinero.' }] },
+      { label: 'No invertir', sub: 'Mejor no mezclar amistad y dinero', outcomes: one({}, 'Tu amigo se enfada un poco, pero tu cartera lo agradece.') },
+    ] };
+  },
+  () => {
+    const don = cash(0.05, 0.5);
+    return { title: '❤️ Fundación benéfica', text: 'Te proponen apadrinar canchas de baloncesto en tu barrio.', options: [
+      { label: `Donar ${fmtMoney(don)}`, sub: 'Devolver al barrio lo que te dio', outcomes: one({ money: -don, fame: 7 }, 'Inauguras tres canchas con tu nombre. Los chavales te adoran.') },
+      { label: 'Ahora no', sub: 'Quizá más adelante', outcomes: one({}, 'Lo dejas para otro momento.') },
+    ] };
+  },
+  () => ({ title: '🎙️ Podcast y streaming', text: 'Una plataforma te ofrece un podcast semanal durante la temporada.', options: [
+    { label: 'Aceptar', sub: 'Dinero y fama, más horas fuera de la pista', outcomes: one({ money: cash(0.04, 0.35), fame: 4, fatigue: 8 }, 'Tu podcast es un éxito entre los aficionados.') },
+    { label: 'Rechazar', sub: 'Concentrado en el baloncesto', outcomes: one({ fatigue: -3 }, 'Más tiempo para descansar.') },
+  ] }),
 ];
 
 // ---------------------------------------------------------------- Ofertas
@@ -453,6 +558,24 @@ function salaryM(team, ovr = S.ovr) {
 function salaryText(team) {
   if (team.league === 'NCAA') return 'Beca + NIL';
   return fmtMoney(salaryM(team)) + '/año';
+}
+
+// Lo que supone cada oferta: dinero por temporada, total del contrato y efecto del rol
+function offerFxHTML(team) {
+  const rel = S.ovr - teamLevel(team), role = roleFor(rel);
+  const per = team.league === 'NCAA' ? 0.05 : salaryM(team);
+  const sponsors = (S.fame / 100) * (team.league === 'NBA' ? 6 : 0.8);
+  const years = S.block;
+  const chips = [
+    `<span class="fx pos">💰 ${fmtMoney(per)}/temp.</span>`,
+    sponsors >= 0.01 ? `<span class="fx pos">👟 +${fmtMoney(sponsors)}/temp. patrocinios</span>` : '',
+    `<span class="fx">Total ${years} temp.: ${fmtMoney((per + sponsors) * years)}</span>`,
+  ];
+  const minutes = clamp(22 + rel * 2.0, team.league === 'NBA' ? 6 : 10, 37);
+  if (S.age <= 25 && role === 'Banquillo') chips.push('<span class="fx neg">📉 Sin minutos: progresión −1 por temp.</span>');
+  else if (S.age <= 25 && minutes > 28) chips.push('<span class="fx pos">📈 Muchos minutos: progresión +1 por temp.</span>');
+  chips.push(`<span class="fx ${minutes > 30 ? 'neg' : ''}">🥵 ~${Math.round(minutes)} min/partido</span>`);
+  return `<div class="fxs">${chips.join('')}</div>`;
 }
 
 function offerFor(team, extra = {}) {
@@ -596,43 +719,40 @@ function fatigueText() {
 }
 
 function choiceButtons(options) {
-  return `<div class="options">${options.map((o, i) => `<button class="offer" data-ev="${i}"><span class="bar" style="background:var(--orange)"></span><span><b>${o.label}</b><small>${o.sub}</small></span><span></span></button>`).join('')}</div>`;
+  return `<div class="options">${options.map((o, i) => `<button class="offer choice" data-ev="${i}"><span class="bar" style="background:var(--orange)"></span><span><b>${o.label}</b>${o.sub ? `<small>${o.sub}</small>` : ''}${outcomesHTML(o.outcomes)}</span><span></span></button>`).join('')}</div>`;
+}
+
+function resultHTML(res) {
+  return `<div class="news">${esc(res.msg)}<div class="fxs">${fxHTML(res.fx)}</div></div>`;
 }
 
 function showEvent(played) {
-  const summer = [
-    { label: '🎯 Mejorar el tiro', sub: 'Tiro ↑ · Cansancio +20', run: () => { S.fatigue += 20; S.focus.tiro = (S.focus.tiro || 0) + (S.age < 30 ? 4 : 2); return 'Mil tiros diarios. Tu mecánica está más fina que nunca. (🎯 Tiro ↑)'; } },
-    { label: '💪 Trabajo físico', sub: 'Físico ↑ · Cansancio +12 · algo menos de riesgo', run: () => { S.fatigue += 12; S.injuryGuard = 1; S.focus.fisico = (S.focus.fisico || 0) + 3; S.focus.velocidad = (S.focus.velocidad || 0) + 1; return 'Llegas a pretemporada como un toro. (💪 Físico ↑ ⚡ Velocidad ↑)'; } },
-    { label: '🏀 Liga de verano', sub: 'Tu peor atributo ↑ · Cansancio +25', run: () => { S.fatigue += 25; const w = ATTRS.reduce((m, a) => (S.attrs[a.k] < S.attrs[m.k] ? a : m)); S.focus[w.k] = (S.focus[w.k] || 0) + 3; return `Partidos y más partidos en verano. (${w.icon} ${w.label} ↑)`; } },
-    { label: '🏝️ Vacaciones', sub: 'Sin mejoras · Cansancio −45', run: () => { S.fatigue -= 45; S.fame += 1; return 'Playa, familia y cero balones. Vuelves con las pilas cargadas. 🔋'; } },
-  ];
+  const opts = summerOptions();
   panel(`
     <h3>Resumen de ${played.length > 1 ? 'las últimas temporadas' : 'la temporada'}</h3>
     ${seasonNews(played)}
     <h3 style="margin-top:16px">☀️ ¿Qué haces este verano?</h3>
     <p class="fatigue-msg ${S.fatigue >= 70 ? 'down' : S.fatigue >= 45 ? 'warn' : 'up'}">${fatigueText()}</p>
-    ${choiceButtons(summer)}`);
+    <p class="muted small">Los entrenamientos cambian cada verano. Las mejoras se aplican al momento.</p>
+    ${choiceButtons(opts)}`);
   document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
-    const msg = summer[+b.dataset.ev].run();
-    S.fatigue = clamp(S.fatigue, 0, 100);
+    const res = runOption(opts[+b.dataset.ev]);
     renderStatus();
-    if (chance(0.6)) showRandomEvent(msg); else showOffers(msg);
+    if (chance(0.6)) showRandomEvent(res); else showOffers(res);
   });
 }
 
-function showRandomEvent(prevMsg) {
+function showRandomEvent(prev) {
   const ev = pick(EVENTS)();
   panel(`
-    <div class="news">${esc(prevMsg)}</div>
+    ${resultHTML(prev)}
     <h3 style="margin-top:16px">${ev.title}</h3>
     <p>${ev.text}</p>
     ${choiceButtons(ev.options)}`);
   document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
-    const msg = ev.options[+b.dataset.ev].run();
-    S.fame = clamp(S.fame, 0, 100);
-    S.fatigue = clamp(S.fatigue, 0, 100);
+    const res = runOption(ev.options[+b.dataset.ev]);
     renderStatus();
-    showOffers(msg);
+    showOffers(res);
   });
 }
 
@@ -647,16 +767,16 @@ function showOffers(msg) {
     <button class="offer" data-offer="${i}">
       <span class="crest-cell">${crest(o.team, 40)}</span>
       <span><b>${esc(o.team.name)}</b> <span class="stars">${starsFor(o.team)}</span>
-        <small>${o.note ? esc(o.note) + ' · ' : ''}Rol previsto: ${o.role} · ${o.salary}</small></span>
+        <small>${o.note ? esc(o.note) + ' · ' : ''}Rol previsto: ${o.role}</small>${offerFxHTML(o.team)}</span>
       <span class="tag ${LEAGUE[o.team.league].tag}">${o.team.league}</span>
     </button>`;
 
   panel(`
-    ${msg ? `<div class="news">${esc(msg)}</div>` : ''}
+    ${msg ? resultHTML(msg) : ''}
     <h3 style="margin-top:14px">📝 Mercado de fichajes · verano ${S.year}</h3>
     <p>${forcedOut ? 'Has agotado tus 4 años universitarios. Toca dar el salto.' : `Tienes ${S.age} años y una media de ${S.ovr}. ¿Qué haces?`}</p>
     <div class="options">
-      ${canStay ? `<button class="offer" data-stay="1"><span class="crest-cell">${crest(cur, 40)}</span><span><b>Seguir en ${esc(cur.name)}</b><small>Rol previsto: ${roleFor(stayRel)} · ${salaryText(cur)}</small></span><span class="tag stay">Renovar</span></button>` : ''}
+      ${canStay ? `<button class="offer" data-stay="1"><span class="crest-cell">${crest(cur, 40)}</span><span><b>Seguir en ${esc(cur.name)}</b><small>Rol previsto: ${roleFor(stayRel)}</small>${offerFxHTML(cur)}</span><span class="tag stay">Renovar</span></button>` : ''}
       ${offers.map(opt).join('')}
       ${S.age >= 31 ? `<button class="offer" data-retire="1"><span class="bar" style="background:var(--red)"></span><span><b>Retirarte</b><small>Colgar las zapatillas con ${S.age} años</small></span><span class="tag ret">Fin</span></button>` : ''}
     </div>`);
