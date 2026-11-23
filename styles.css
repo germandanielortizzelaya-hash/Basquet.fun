@@ -325,3 +325,17 @@ input[type=range] { padding: 0; accent-color: var(--orange); }
   .opt { padding: 11px 12px; gap: 10px; }
   .opt-icon { width: 42px; height: 42px; font-size: 1.35rem; }
 }
+
+/* estadísticas de carrera en el perfil */
+.career-stats { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 10px; }
+.cs-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.cs-box { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 8px 6px; text-align: center; display: grid; gap: 2px; }
+.cs-box b { font-size: 1.15rem; font-weight: 900; color: var(--orange); }
+.cs-box small { color: var(--muted); font-size: .7rem; }
+.cs-i { font-size: 1rem; }
+.cs-avgs { display: flex; gap: 6px; flex-wrap: wrap; }
+.cs-avg { font-size: .78rem; background: rgba(255,255,255,.05); border-radius: 8px; padding: 3px 8px; color: var(--muted); }
+.cs-avg b { color: var(--text); }
+.cs-label { color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; font-size: .7rem; }
+.cs-trophies { display: grid; gap: 6px; }
+@media (max-width: 600px) { .cs-grid { grid-template-columns: repeat(2, 1fr); } }

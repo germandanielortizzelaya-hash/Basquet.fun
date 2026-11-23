@@ -707,7 +707,32 @@ function renderStatus() {
       </div>
     </div>
     <div class="ovr"><b>${S.ovr}</b><small>Media</small></div>
-    <div class="attrs">${attrsHTML(S.attrs, S.prevAttrs)}</div>`;
+    <div class="attrs">${attrsHTML(S.attrs, S.prevAttrs)}</div>
+    <div class="career-stats">${careerStatsHTML()}</div>`;
+}
+
+// Totales de carrera visibles durante toda la partida
+function careerStatsHTML() {
+  const T = S.totals, g = Math.max(1, T.g);
+  const trophies = Object.entries(S.trophies).sort((a, b) => b[1] - a[1]);
+  const totals = [
+    ['🏀', 'Puntos', Math.round(T.pts).toLocaleString('es-ES')],
+    ['🙌', 'Rebotes', Math.round(T.reb).toLocaleString('es-ES')],
+    ['🤝', 'Asistencias', Math.round(T.ast).toLocaleString('es-ES')],
+    ['🎽', 'Partidos', T.g],
+  ];
+  const avgs = [
+    ['PTS/p', fmt1(T.pts / g)], ['REB/p', fmt1(T.reb / g)], ['AST/p', fmt1(T.ast / g)],
+  ];
+  return `
+    <div class="cs-grid">${totals.map(([i, l, v]) => `<div class="cs-box"><span class="cs-i">${i}</span><b>${v}</b><small>${l}</small></div>`).join('')}</div>
+    <div class="cs-avgs">${avgs.map(([l, v]) => `<span class="cs-avg">${l} <b>${v}</b></span>`).join('')}</div>
+    <div class="cs-trophies">
+      <small class="cs-label">🏆 Trofeos y premios (${trophies.reduce((a, [, v]) => a + v, 0)})</small>
+      ${trophies.length
+        ? `<div class="chips">${trophies.map(([k, v]) => `<span class="chip gold">${v}× ${esc(k)}</span>`).join('')}</div>`
+        : '<span class="muted">Todavía sin trofeos</span>'}
+    </div>`;
 }
 
 function attrsHTML(attrs, prev) {
