@@ -114,7 +114,7 @@ function crest(t, size = 40) {
   if (!t) return '';
   const fg = isLight(t.color) ? '#111' : '#fff';
   const fs = t.abbr.length >= 5 ? 15 : t.abbr.length === 4 ? 18 : 22;
-  const icon = { NBA: '★', ACB: '●', NCAA: '▲' }[t.league];
+  const icon = { NBA: '★', ACB: '●', NCAA: '▲' }[t.league] || '';
   return `<svg class="crest" width="${size}" height="${Math.round(size * 1.15)}" viewBox="0 0 80 92" role="img" aria-label="${esc(t.name)}">
     <path d="M40 2 L76 12 V46 C76 70 58 84 40 90 C22 84 4 70 4 46 V12 Z" fill="${t.color}" stroke="${t.color2}" stroke-width="5"/>
     <path d="M6 58 H74 L72 66 H8 Z" fill="${t.color2}"/>
@@ -168,6 +168,38 @@ function initAttrs(target, height) {
   S.ovr = computeOvr();
 }
 
+const NO_TEAM = { name: 'Sin equipo', league: '—', s: 50, base: 50, color: '#3a3f4b', color2: '#9aa3b5', abbr: '?' };
+
+// Ofertas para empezar según el país: de dónde suelen salir los jugadores de cada sitio
+const START_PATHS = {
+  'España': { ACB: 4, NCAA: 0.35, text: 'Las canteras de la Liga Endesa se pelean por ti.' },
+  'EE. UU.': { NCAA: 4, text: 'Las universidades de la NCAA te ofrecen beca.' },
+  'Argentina': { ACB: 2, NCAA: 2, text: 'Clubes españoles y universidades de EE. UU. siguen tu carrera.' },
+  'México': { NCAA: 3, ACB: 1, text: 'Te llueven becas desde EE. UU. y algún club español pregunta por ti.' },
+  'Francia': { ACB: 2, NCAA: 2, text: 'Te observan desde España y desde las universidades americanas.' },
+  'Otro': { ACB: 2, NCAA: 2, text: 'Los ojeadores internacionales te han descubierto.' },
+};
+
+function startOffers() {
+  const path = START_PATHS[S.nat] || START_PATHS['Otro'];
+  // Cuanto más talento ven los ojeadores (potencial + nivel actual), mejores equipos llaman
+  const scout = S.pot * 0.7 + S.ovr * 0.3 + rand(-4, 4);
+  const talent = clamp((scout - 62) / 30, 0, 1);   // 0 = poco talento … 1 = élite
+  const offers = [];
+  for (const league of ['ACB', 'NCAA']) {
+    let n = path[league] || 0;
+    if (n > 0 && n < 1) n = chance(n) ? 1 : 0;
+    let pool = TEAMS.filter(t => t.league === league);
+    const lo = Math.min(...pool.map(t => t.s)), hi = Math.max(...pool.map(t => t.s));
+    const target = lo + talent * (hi - lo);
+    for (let i = 0; i < n && pool.length; i++) {
+      const t = weightedPick(pool, x => Math.exp(-Math.abs(x.s - target) / ((hi - lo) / 6)));
+      offers.push(t); pool = pool.filter(x => x !== t);
+    }
+  }
+  return offers.sort((a, b) => b.s - a.s);
+}
+
 function newCareer({ name, pos, nat, start, block, height }) {
   TEAMS.forEach(t => { t.s = t.base; });
   S = {
@@ -184,7 +216,7 @@ function newCareer({ name, pos, nat, start, block, height }) {
     fame: 10,
     injuryGuard: 0,           // temporadas con menor riesgo de lesión
     growthBonus: 0,           // bonificación de progresión para la próxima temporada
-    team: teamByName(start),
+    team: start ? teamByName(start) : NO_TEAM,
     year: START_YEAR,
     drafted: false,
     draftInfo: null,
@@ -198,7 +230,7 @@ function newCareer({ name, pos, nat, start, block, height }) {
     peak: 0,                  // media máxima alcanzada
     over: false,
   };
-  S.teamsPath.push(S.team.name);
+  if (start) S.teamsPath.push(S.team.name);
   const start0 = randi(54, 64);
   S.pot = Math.max(start0 + 3, Math.round(63 + 34 * Math.pow(Math.random(), 1.1)));
   initAttrs(start0, height);
@@ -553,7 +585,8 @@ const EVENTS = [
 function salaryM(team, ovr = S.ovr) {
   if (team.league === 'NBA') return Math.max(1.1, (ovr - 70) * 2.3 * (0.75 + (team.s - 55) / 80)) * 0.92;
   if (team.league === 'NCAA') return 0.05;
-  return Math.max(0.06, (ovr - 58) * 0.12) * (0.75 + (team.s - 55) / 80);
+  const acb = Math.max(0.06, (ovr - 58) * 0.12) * (0.75 + (team.s - 55) / 80);
+  return S && S.age <= 19 ? Math.min(acb, 0.03 + team.s / 2000) : acb;   // contrato de formación
 }
 function salaryText(team) {
   if (team.league === 'NCAA') return 'Beca + NIL';
@@ -1055,12 +1088,41 @@ function toast(msg) {
 }
 
 // ---------------------------------------------------------------- Arranque
-function init() {
-  const sel = $('#f-start');
-  const groups = { ACB: '🇪🇸 Cantera ACB', NCAA: '🇺🇸 Universidad (NCAA)' };
-  sel.innerHTML = Object.entries(groups).map(([lg, label]) =>
-    `<optgroup label="${label}">${TEAMS.filter(t => t.league === lg).map(t => `<option>${esc(t.name)}</option>`).join('')}</optgroup>`).join('');
+function scoutText() {
+  return S.pot >= 92 ? 'un talento generacional' : S.pot >= 85 ? 'madera de estrella' : S.pot >= 78 ? 'buen futuro' : S.pot >= 70 ? 'nivel para ser un jugador de rotación' : 'mucho trabajo por delante… y no todos llegan';
+}
 
+function showStartOffers() {
+  const offers = startOffers();
+  const path = START_PATHS[S.nat] || START_PATHS['Otro'];
+  const flag = $('#f-nat').selectedOptions[0].textContent.split(' ')[0];
+  panel(`
+    <h3>${flag} Tus primeras ofertas</h3>
+    <p>Tienes 18 años y una media de <b>${S.ovr}</b>. Los ojeadores dicen que tienes ${scoutText()}. ${path.text}</p>
+    <div class="options">
+      ${offers.map((t, i) => `
+        <button class="offer" data-start="${i}">
+          <span class="crest-cell">${crest(t, 40)}</span>
+          <span><b>${esc(t.name)}</b> <span class="stars">${starsFor(t)}</span>
+            <small>${t.league === 'NCAA' ? 'Beca universitaria · máximo 4 años y luego al Draft' : 'Cantera y primer equipo · puedes ir al Draft desde los 19'} · Rol previsto: ${roleFor(S.ovr - teamLevel(t))}</small>
+            ${t.league === 'NCAA' ? '<div class="fxs"><span class="fx pos">🎓 Beca completa</span><span class="fx pos">💰 50 mil €/temp. (NIL)</span></div>' : offerFxHTML(t)}
+          </span>
+          <span class="tag ${LEAGUE[t.league].tag}">${t.league}</span>
+        </button>`).join('')}
+    </div>`);
+  document.querySelectorAll('[data-start]').forEach(b => b.onclick = () => {
+    const t = offers[+b.dataset.start];
+    S.team = t; S.teamsPath = [t.name];
+    renderAll();
+    panel(`
+      <div class="welcome">${crest(t, 72)}<h3>¡Bienvenido a ${esc(t.name)}!</h3></div>
+      <p>Empiezas tu carrera en ${t.league === 'NCAA' ? 'la NCAA' : 'la cantera y el primer equipo'} de ${esc(t.name)}. ¡A por todas!</p>
+      <div class="actions"><button class="btn primary big" id="btn-go">Jugar ${S.block > 1 ? `las primeras ${S.block} temporadas` : 'la primera temporada'} ▶</button></div>`);
+    $('#btn-go').onclick = playBlock;
+  });
+}
+
+function init() {
   const syncHeight = () => {
     const [mn, mx] = HEIGHT[$('#f-pos').value], r = $('#f-height');
     r.min = mn; r.max = mx; r.value = Math.round((mn + mx) / 2); $('#f-height-out').textContent = fmtHeight(+r.value);
@@ -1074,16 +1136,11 @@ function init() {
     const name = $('#f-name').value.trim() || 'Jugador Anónimo';
     newCareer({
       height: +$('#f-height').value,
-      name, pos: $('#f-pos').value, nat: $('#f-nat').value, start: sel.value,
+      name, pos: $('#f-pos').value, nat: $('#f-nat').value, start: null,
       block: +document.querySelector('input[name=mode]:checked').value,
     });
     renderAll();
-    const t = S.team;
-    panel(`
-      <div class="welcome">${crest(t, 72)}<h3>¡Bienvenido a ${esc(t.name)}!</h3></div>
-      <p>Con 18 años y una media de <b>${S.ovr}</b>, empiezas tu carrera en ${t.league === 'NCAA' ? 'la NCAA' : 'la cantera y el primer equipo'} de ${esc(t.name)}. Los ojeadores dicen que tienes ${S.pot >= 92 ? 'un talento generacional' : S.pot >= 85 ? 'madera de estrella' : S.pot >= 78 ? 'buen futuro' : S.pot >= 70 ? 'nivel para ser un jugador de rotación' : 'mucho trabajo por delante… y no todos llegan'}.</p>
-      <div class="actions"><button class="btn primary big" id="btn-go">Jugar ${S.block > 1 ? `las primeras ${S.block} temporadas` : 'la primera temporada'} ▶</button></div>`);
-    $('#btn-go').onclick = playBlock;
+    showStartOffers();
     show('game');
   });
 
