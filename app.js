@@ -418,26 +418,36 @@ function applyFx(fx = {}) {
   if (fx.guard) S.injuryGuard = Math.max(S.injuryGuard, fx.guard);
 }
 
+const ATTR_COLOR = { tiro: '#ff7a1a', pase: '#3b82f6', defensa: '#a855f7', rebote: '#14b8a6', velocidad: '#eab308', fisico: '#ef4444' };
+const fmtShort = m => { const a = Math.abs(m); return a >= 1 ? `${a.toFixed(1).replace('.', ',')}M€` : `${Math.max(1, Math.round(a * 1000))}k€`; };
+
 function fxHTML(fx = {}) {
   const chips = [];
   const sign = v => (v > 0 ? '+' : '−') + Math.abs(v);
+  const chip = (cls, txt, title) => `<span class="fx ${cls}" title="${title}">${txt}</span>`;
   for (const [k, v] of Object.entries(fx.attrs || {})) {
     if (!v) continue;
     const a = ATTRS.find(x => x.k === k);
-    chips.push(`<span class="fx ${v > 0 ? 'pos' : 'neg'}">${a.icon} ${a.label} ${sign(v)}</span>`);
+    chips.push(chip(v > 0 ? 'pos' : 'neg', `${a.icon} ${sign(v)}`, a.label));
   }
-  if (fx.pot) chips.push(`<span class="fx pos">🌱 Potencial ${sign(fx.pot)}</span>`);
-  if (fx.fatigue) chips.push(`<span class="fx ${fx.fatigue > 0 ? 'neg' : 'pos'}">🥵 Cansancio ${sign(fx.fatigue)}</span>`);
-  if (fx.money) chips.push(`<span class="fx ${fx.money > 0 ? 'pos' : 'neg'}">💰 ${fx.money > 0 ? '+' : '−'}${fmtMoney(Math.abs(fx.money))}</span>`);
-  if (fx.fame) chips.push(`<span class="fx ${fx.fame > 0 ? 'pos' : 'neg'}">⭐ Fama ${sign(fx.fame)}</span>`);
-  if (fx.guard) chips.push('<span class="fx pos">🩹 Menos riesgo de lesión</span>');
-  return chips.length ? chips.join('') : '<span class="fx">Sin cambios</span>';
+  if (fx.pot) chips.push(chip('pos', `🌱 ${sign(fx.pot)}`, 'Potencial'));
+  if (fx.fatigue) chips.push(chip(fx.fatigue > 0 ? 'neg' : 'pos', `🥵 ${sign(fx.fatigue)}`, 'Cansancio'));
+  if (fx.money) chips.push(chip(fx.money > 0 ? 'pos' : 'neg', `💰 ${fx.money > 0 ? '+' : '−'}${fmtShort(fx.money)}`, 'Dinero'));
+  if (fx.fame) chips.push(chip(fx.fame > 0 ? 'pos' : 'neg', `⭐ ${sign(fx.fame)}`, 'Fama'));
+  if (fx.guard) chips.push(chip('pos', '🩹', 'Menos riesgo de lesión'));
+  return chips.length ? chips.join('') : '<span class="fx">Sin efectos</span>';
+}
+
+function fxScore(fx = {}) {
+  return Object.values(fx.attrs || {}).reduce((a, v) => a + v, 0) + (fx.pot || 0) + (fx.fame || 0) / 2 + (fx.money || 0) * 4 - (fx.fatigue || 0) / 10;
 }
 
 function outcomesHTML(outcomes) {
-  if (outcomes.length === 1) return `<div class="fxs">${fxHTML(outcomes[0].fx)}</div>`;
-  return outcomes.map(o => `<div class="fxs"><span class="prob">${Math.round(o.p * 100)}%</span>${fxHTML(o.fx)}</div>`).join('');
+  if (outcomes.length === 1) return `<span class="fxs">${fxHTML(outcomes[0].fx)}</span>`;
+  return outcomes.map(o => `<span class="fxs"><span class="prob ${fxScore(o.fx) >= 0 ? 'good' : 'bad'}">${Math.round(o.p * 100)}%</span>${fxHTML(o.fx)}</span>`).join('');
 }
+
+const FX_LEGEND = '<p class="legend">🥵 cansancio · 💰 dinero · ⭐ fama · 🌱 potencial · 🩹 menos lesiones</p>';
 
 function runOption(opt) {
   let r = Math.random(), chosen = opt.outcomes[opt.outcomes.length - 1];
@@ -448,17 +458,17 @@ function runOption(opt) {
 
 // ---------------------------------------------------------------- Entrenamientos de verano (cambian cada vez)
 const TRAININGS = {
-  tiro: { name: 'Sesiones de tiro', icon: '🎯', pair: 'pase', msg: 'Mil tiros diarios. Tu mecánica está más fina que nunca.' },
-  pase: { name: 'Clínic de dirección de juego', icon: '🤝', pair: 'tiro', msg: 'Lees el juego un segundo antes que los demás.' },
-  defensa: { name: 'Campus defensivo', icon: '🛡️', pair: 'velocidad', msg: 'Piernas flexionadas y manos activas: ahora eres un candado.' },
-  rebote: { name: 'Trabajo de rebote y poste', icon: '🙌', pair: 'fisico', msg: 'Cajear, saltar, asegurar. El rebote es tuyo.' },
-  velocidad: { name: 'Pliometría y velocidad', icon: '⚡', pair: 'fisico', msg: 'Tu primer paso es más explosivo que nunca.' },
-  fisico: { name: 'Gimnasio y musculación', icon: '💪', pair: 'rebote', msg: 'Llegas a pretemporada como un toro.' },
+  tiro: { name: 'Tiro', icon: '🎯', pair: 'pase', msg: 'Mil tiros diarios. Tu mecánica está más fina que nunca.' },
+  pase: { name: 'Pase y dirección', icon: '🤝', pair: 'tiro', msg: 'Lees el juego un segundo antes que los demás.' },
+  defensa: { name: 'Defensa', icon: '🛡️', pair: 'velocidad', msg: 'Piernas flexionadas y manos activas: ahora eres un candado.' },
+  rebote: { name: 'Rebote y poste', icon: '🙌', pair: 'fisico', msg: 'Cajear, saltar, asegurar. El rebote es tuyo.' },
+  velocidad: { name: 'Velocidad', icon: '⚡', pair: 'fisico', msg: 'Tu primer paso es más explosivo que nunca.' },
+  fisico: { name: 'Gimnasio', icon: '💪', pair: 'rebote', msg: 'Llegas a pretemporada como un toro.' },
 };
 const LEVELS = [
-  { tag: 'suave', gain: 2, pair: 0, fatigue: 8, cost: () => cash(0.01, 0.03) },
-  { tag: 'intensivo', gain: 4, pair: 0, fatigue: 20, cost: () => cash(0.03, 0.1) },
-  { tag: 'con entrenador privado', gain: 4, pair: 2, fatigue: 14, cost: () => cash(0.12, 0.6) },
+  { tag: 'Suave', badge: '🔥', gain: 2, pair: 0, fatigue: 8, cost: () => cash(0.01, 0.03) },
+  { tag: 'Intensivo', badge: '🔥🔥', gain: 4, pair: 0, fatigue: 20, cost: () => cash(0.03, 0.1) },
+  { tag: 'Entrenador privado', badge: '👨‍🏫', gain: 4, pair: 2, fatigue: 14, cost: () => cash(0.12, 0.6) },
 ];
 
 function trainingOption(k, lv) {
@@ -471,7 +481,7 @@ function trainingOption(k, lv) {
   if (pairGain) attrs[t.pair] = pairGain;
   const fx = { attrs, fatigue: lv.fatigue, money: -lv.cost() };
   if (k === 'fisico') fx.guard = 1;
-  return { label: `${t.icon} ${t.name} (${lv.tag})`, sub: '', outcomes: one(fx, t.msg) };
+  return { icon: t.icon, color: ATTR_COLOR[k], label: t.name, badge: `${lv.badge} ${lv.tag}`, outcomes: one(fx, t.msg) };
 }
 
 function summerOptions() {
@@ -480,9 +490,9 @@ function summerOptions() {
   const opts = keys.map((k, i) => trainingOption(k, levels[i]));
   // Liga de verano: mejora tu peor atributo
   const worst = ATTRS.reduce((m, a) => (S.attrs[a.k] < S.attrs[m.k] ? a : m));
-  if (chance(0.5)) opts.push({ label: '🏀 Liga de verano', sub: `Trabajas tu punto débil: ${worst.label.toLowerCase()}`, outcomes: one({ attrs: { [worst.k]: 3 }, fatigue: 25, money: cash(0.01, 0.05) }, 'Partidos y más partidos en verano.') });
-  opts.push({ label: '🏝️ Vacaciones', sub: 'Desconectar del todo', outcomes: one({ fatigue: -45, money: -cash(0.03, 0.25), fame: 1 }, 'Playa, familia y cero balones. Vuelves con las pilas cargadas. 🔋') });
-  opts.push({ label: '🏠 Descanso en casa', sub: 'Gratis, pero recuperas menos', outcomes: one({ fatigue: -28 }, 'Sofá, series y paseos. Recuperas bastante.') });
+  if (chance(0.5)) opts.push({ icon: '🏀', color: '#f97316', label: 'Liga de verano', badge: 'Punto débil', outcomes: one({ attrs: { [worst.k]: 3 }, fatigue: 25, money: cash(0.01, 0.05) }, 'Partidos y más partidos en verano.') });
+  opts.push({ icon: '🏝️', color: '#22c55e', label: 'Vacaciones', badge: 'Recuperas mucho', outcomes: one({ fatigue: -45, money: -cash(0.03, 0.25), fame: 1 }, 'Playa, familia y cero balones. Vuelves con las pilas cargadas. 🔋') });
+  opts.push({ icon: '🏠', color: '#10b981', label: 'Descanso en casa', badge: 'Gratis', outcomes: one({ fatigue: -28 }, 'Sofá, series y paseos. Recuperas bastante.') });
   return opts;
 }
 
@@ -593,22 +603,39 @@ function salaryText(team) {
   return fmtMoney(salaryM(team)) + '/año';
 }
 
-// Lo que supone cada oferta: dinero por temporada, total del contrato y efecto del rol
-function offerFxHTML(team) {
+// Tarjeta de oferta: color del equipo, escudo y datos clave en etiquetas cortas
+const ROLE_STYLE = { Estrella: ['🌟', 'star'], Titular: ['✅', 'start'], 'Rotación': ['🔄', 'rot'], Banquillo: ['🪑', 'bench'] };
+function teamCard(team, { attr, badges = [], youth = false } = {}) {
   const rel = S.ovr - teamLevel(team), role = roleFor(rel);
-  const per = team.league === 'NCAA' ? 0.05 : salaryM(team);
-  const sponsors = (S.fame / 100) * (team.league === 'NBA' ? 6 : 0.8);
-  const years = S.block;
-  const chips = [
-    `<span class="fx pos">💰 ${fmtMoney(per)}/temp.</span>`,
-    sponsors >= 0.01 ? `<span class="fx pos">👟 +${fmtMoney(sponsors)}/temp. patrocinios</span>` : '',
-    `<span class="fx">Total ${years} temp.: ${fmtMoney((per + sponsors) * years)}</span>`,
+  const [ri, rc] = ROLE_STYLE[role];
+  const ncaa = team.league === 'NCAA';
+  const per = ncaa ? 0.05 : salaryM(team);
+  const sponsors = ncaa ? 0 : (S.fame / 100) * (team.league === 'NBA' ? 6 : 0.8);
+  const minutes = Math.round(clamp(22 + rel * 2.0, team.league === 'NBA' ? 6 : 10, 37));
+  const kpis = [
+    `<span class="kpi role ${rc}">${ri} ${role}</span>`,
+    `<span class="kpi money" title="Sueldo ${fmtMoney(per)} + patrocinios ${fmtMoney(sponsors)}">💰 ${fmtShort(per + sponsors)}/año</span>`,
+    `<span class="kpi ${minutes > 30 ? 'hot' : ''}" title="Minutos por partido">⏱️ ${minutes}'</span>`,
   ];
-  const minutes = clamp(22 + rel * 2.0, team.league === 'NBA' ? 6 : 10, 37);
-  if (S.age <= 25 && role === 'Banquillo') chips.push('<span class="fx neg">📉 Sin minutos: progresión −1 por temp.</span>');
-  else if (S.age <= 25 && minutes > 28) chips.push('<span class="fx pos">📈 Muchos minutos: progresión +1 por temp.</span>');
-  chips.push(`<span class="fx ${minutes > 30 ? 'neg' : ''}">🥵 ~${Math.round(minutes)} min/partido</span>`);
-  return `<div class="fxs">${chips.join('')}</div>`;
+  if (S.age <= 25 && role === 'Banquillo') kpis.push('<span class="kpi bad" title="Sin minutos te estancas: progresión −1 por temporada">📉 Te estancas</span>');
+  else if (S.age <= 25 && minutes > 28) kpis.push('<span class="kpi good" title="Muchos minutos: progresión +1 por temporada">📈 Progresas</span>');
+  return `<button class="opt team" ${attr} style="--tc:${team.color}">
+    <span class="opt-crest">${crest(team, 46)}</span>
+    <span class="opt-body">
+      <span class="opt-head"><b>${esc(team.name)}</b><span class="tag ${LEAGUE[team.league].tag}">${team.league}</span></span>
+      <span class="opt-sub"><span class="stars">${starsFor(team)}</span>${badges.map(b => `<span class="pill">${b}</span>`).join('')}</span>
+      <span class="kpis">${kpis.join('')}</span>
+    </span>
+  </button>`;
+}
+
+function offerBadges(o) {
+  const b = [];
+  if (o.draft) b.push(`🎯 Draft nº ${o.draft}`);
+  if (o.note && o.note.includes('ambiciosa')) b.push('🔥 La mejor');
+  if (o.note && o.note.includes('Última')) b.push('⚠️ Última opción');
+  if (o.note && o.note.includes('rodilla')) b.push('🩼 Dudan de ti');
+  return b;
 }
 
 function offerFor(team, extra = {}) {
@@ -751,8 +778,21 @@ function fatigueText() {
     : `🔋 Cansancio ${f}%: estás fresco.`;
 }
 
+const EVENT_COLORS = ['#3b82f6', '#a855f7'];
 function choiceButtons(options) {
-  return `<div class="options">${options.map((o, i) => `<button class="offer choice" data-ev="${i}"><span class="bar" style="background:var(--orange)"></span><span><b>${o.label}</b>${o.sub ? `<small>${o.sub}</small>` : ''}${outcomesHTML(o.outcomes)}</span><span></span></button>`).join('')}</div>`;
+  return `<div class="options">${options.map((o, i) => {
+    const risky = o.outcomes.length > 1;
+    const color = o.color || (risky ? '#f59e0b' : EVENT_COLORS[i % 2]);
+    const icon = o.icon || (risky ? '🎲' : i === 0 ? '👍' : '✋');
+    const badge = o.badge || (risky ? 'Arriesgado' : '');
+    return `<button class="opt" data-ev="${i}" style="--tc:${color}">
+      <span class="opt-icon">${icon}</span>
+      <span class="opt-body">
+        <span class="opt-head"><b>${o.label}</b>${badge ? `<span class="pill">${badge}</span>` : ''}</span>
+        ${outcomesHTML(o.outcomes)}
+      </span>
+    </button>`;
+  }).join('')}</div>`;
 }
 
 function resultHTML(res) {
@@ -766,7 +806,7 @@ function showEvent(played) {
     ${seasonNews(played)}
     <h3 style="margin-top:16px">☀️ ¿Qué haces este verano?</h3>
     <p class="fatigue-msg ${S.fatigue >= 70 ? 'down' : S.fatigue >= 45 ? 'warn' : 'up'}">${fatigueText()}</p>
-    <p class="muted small">Los entrenamientos cambian cada verano. Las mejoras se aplican al momento.</p>
+    ${FX_LEGEND}
     ${choiceButtons(opts)}`);
   document.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => {
     const res = runOption(opts[+b.dataset.ev]);
@@ -796,22 +836,16 @@ function showOffers(msg) {
   const stayRel = S.ovr - teamLevel(cur);
   const canStay = !forcedOut && (stayRel >= -7 || cur.league === 'NCAA');
 
-  const opt = (o, i) => `
-    <button class="offer" data-offer="${i}">
-      <span class="crest-cell">${crest(o.team, 40)}</span>
-      <span><b>${esc(o.team.name)}</b> <span class="stars">${starsFor(o.team)}</span>
-        <small>${o.note ? esc(o.note) + ' · ' : ''}Rol previsto: ${o.role}</small>${offerFxHTML(o.team)}</span>
-      <span class="tag ${LEAGUE[o.team.league].tag}">${o.team.league}</span>
-    </button>`;
+  const opt = (o, i) => teamCard(o.team, { attr: `data-offer="${i}"`, badges: offerBadges(o) });
 
   panel(`
     ${msg ? resultHTML(msg) : ''}
     <h3 style="margin-top:14px">📝 Mercado de fichajes · verano ${S.year}</h3>
-    <p>${forcedOut ? 'Has agotado tus 4 años universitarios. Toca dar el salto.' : `Tienes ${S.age} años y una media de ${S.ovr}. ¿Qué haces?`}</p>
+    <p>${forcedOut ? '🎓 Se acabaron tus 4 años universitarios.' : `${S.age} años · media <b>${S.ovr}</b>`}</p>
     <div class="options">
-      ${canStay ? `<button class="offer" data-stay="1"><span class="crest-cell">${crest(cur, 40)}</span><span><b>Seguir en ${esc(cur.name)}</b><small>Rol previsto: ${roleFor(stayRel)}</small>${offerFxHTML(cur)}</span><span class="tag stay">Renovar</span></button>` : ''}
+      ${canStay ? teamCard(cur, { attr: 'data-stay="1"', badges: ['🔁 Renovar'] }) : ''}
       ${offers.map(opt).join('')}
-      ${S.age >= 31 ? `<button class="offer" data-retire="1"><span class="bar" style="background:var(--red)"></span><span><b>Retirarte</b><small>Colgar las zapatillas con ${S.age} años</small></span><span class="tag ret">Fin</span></button>` : ''}
+      ${S.age >= 31 ? `<button class="opt" data-retire="1" style="--tc:#ef4444"><span class="opt-icon">👋</span><span class="opt-body"><span class="opt-head"><b>Retirarte</b><span class="pill">Fin de carrera</span></span></span></button>` : ''}
     </div>`);
 
   document.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => {
@@ -1094,21 +1128,13 @@ function scoutText() {
 
 function showStartOffers() {
   const offers = startOffers();
-  const path = START_PATHS[S.nat] || START_PATHS['Otro'];
   const flag = $('#f-nat').selectedOptions[0].textContent.split(' ')[0];
   panel(`
     <h3>${flag} Tus primeras ofertas</h3>
-    <p>Tienes 18 años y una media de <b>${S.ovr}</b>. Los ojeadores dicen que tienes ${scoutText()}. ${path.text}</p>
+    <p>18 años · media <b>${S.ovr}</b> · 🔭 Los ojeadores ven ${scoutText()}.</p>
+    <p class="legend">🏠 Cantera: puedes ir al Draft desde los 19 · 🎓 Beca NCAA: 4 años máximo y luego al Draft</p>
     <div class="options">
-      ${offers.map((t, i) => `
-        <button class="offer" data-start="${i}">
-          <span class="crest-cell">${crest(t, 40)}</span>
-          <span><b>${esc(t.name)}</b> <span class="stars">${starsFor(t)}</span>
-            <small>${t.league === 'NCAA' ? 'Beca universitaria · máximo 4 años y luego al Draft' : 'Cantera y primer equipo · puedes ir al Draft desde los 19'} · Rol previsto: ${roleFor(S.ovr - teamLevel(t))}</small>
-            ${t.league === 'NCAA' ? '<div class="fxs"><span class="fx pos">🎓 Beca completa</span><span class="fx pos">💰 50 mil €/temp. (NIL)</span></div>' : offerFxHTML(t)}
-          </span>
-          <span class="tag ${LEAGUE[t.league].tag}">${t.league}</span>
-        </button>`).join('')}
+      ${offers.map((t, i) => teamCard(t, { attr: `data-start="${i}"`, badges: [t.league === 'NCAA' ? '🎓 Beca' : '🏠 Cantera'] })).join('')}
     </div>`);
   document.querySelectorAll('[data-start]').forEach(b => b.onclick = () => {
     const t = offers[+b.dataset.start];
